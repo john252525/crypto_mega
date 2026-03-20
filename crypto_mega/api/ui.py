@@ -44,6 +44,12 @@ tailwind.config = {
   .pulse { animation: pulse 2s infinite; }
   .sparkline { display: inline-block; vertical-align: middle; }
   .sparkline canvas { display: block; }
+  .log-line { font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; border-bottom: 1px solid #111; padding: 1px 0; }
+  .log-DEBUG { color: #555; }
+  .log-INFO { color: #8bc34a; }
+  .log-WARNING { color: #ff9800; }
+  .log-ERROR { color: #f44336; font-weight: bold; }
+  .log-CRITICAL { color: #ff0000; font-weight: bold; background: #330000; }
 </style>
 </head>
 <body class="text-gray-300 min-h-screen">
@@ -70,6 +76,7 @@ tailwind.config = {
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="signals" onclick="switchTab('signals')">Signals</button>
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="positions" onclick="switchTab('positions')">Positions</button>
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="strategies" onclick="switchTab('strategies')">Strategies</button>
+  <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="logs" onclick="switchTab('logs')">Logs</button>
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="control" onclick="switchTab('control')">Control</button>
 </nav>
 
@@ -202,6 +209,29 @@ tailwind.config = {
     </div>
   </div>
 
+  <!-- ═══ LOGS TAB ═══ -->
+  <div id="tab-logs" class="hidden fade-in">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="text-lg font-semibold text-accent">System Logs</h2>
+      <div class="flex items-center gap-3">
+        <label class="flex items-center gap-1 text-xs"><input type="checkbox" id="log-auto" checked onchange="toggleAutoScroll()"> Auto-scroll</label>
+        <select id="log-level-filter" class="bg-card border border-border rounded px-2 py-1 text-xs" onchange="filterLogs()">
+          <option value="all">All levels</option>
+          <option value="DEBUG">DEBUG</option>
+          <option value="INFO">INFO</option>
+          <option value="WARNING">WARNING</option>
+          <option value="ERROR">ERROR</option>
+        </select>
+        <input type="text" id="log-search" placeholder="Filter text..." class="bg-card border border-border rounded px-2 py-1 text-xs w-40" oninput="filterLogs()">
+        <button onclick="clearLogs()" class="text-xs px-2 py-1 bg-card border border-border rounded hover:border-danger text-gray-500">Clear</button>
+        <span class="text-xs text-gray-600" id="log-count">0 entries</span>
+      </div>
+    </div>
+    <div id="log-container" class="bg-card border border-border rounded-lg p-3 font-mono overflow-y-auto" style="height: calc(100vh - 180px); max-height: 800px;">
+      <div class="text-gray-600 text-xs">Connecting to log stream...</div>
+    </div>
+  </div>
+
   <!-- ═══ CONTROL TAB ═══ -->
   <div id="tab-control" class="hidden fade-in">
     <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -295,6 +325,7 @@ function refreshTab() {
   if (currentTab === 'positions') loadPositions('open');
   if (currentTab === 'strategies') loadStrategies();
   if (currentTab === 'signals') loadSignalFeed();
+  if (currentTab === 'logs') filterLogs();
 }
 
 // ─── Dashboard ───
@@ -565,6 +596,125 @@ function connectWS() {
   };
 }
 
+// ─── Logs ───
+let logWs = null;
+let logEntries = [];
+let logAutoScroll = true;
+const LOG_LEVELS = { DEBUG: 0, INFO: 1, WARNING: 2, ERROR: 3, CRITICAL: 4 };
+const LOG_ICONS = { DEBUG: '  ', INFO: 'ℹ ', WARNING: '⚠ ', ERROR: '✖ ', CRITICAL: '🔥' };
+
+function connectLogWS() {
+  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+  logWs = new WebSocket(`${proto}://${location.host}/ws/logs`);
+  logWs.onopen = () => {
+    appendLogEntry({ ts: Date.now()/1000, level: 'INFO', logger: 'ui', msg: '--- Connected to log stream ---' });
+  };
+  logWs.onclose = () => {
+    appendLogEntry({ ts: Date.now()/1000, level: 'WARNING', logger: 'ui', msg: '--- Log stream disconnected, reconnecting... ---' });
+    setTimeout(connectLogWS, 3000);
+  };
+  logWs.onmessage = (e) => {
+    try {
+      const msg = JSON.parse(e.data);
+      if (msg.type === 'logs' && msg.entries) {
+        msg.entries.forEach(entry => appendLogEntry(entry));
+      }
+    } catch {}
+  };
+}
+
+function appendLogEntry(entry) {
+  logEntries.push(entry);
+  if (logEntries.length > 5000) logEntries = logEntries.slice(-4000);
+  document.getElementById('log-count').textContent = logEntries.length + ' entries';
+
+  // Check filters
+  if (!passesFilter(entry)) return;
+
+  const container = document.getElementById('log-container');
+  const div = document.createElement('div');
+  div.className = `log-line log-${entry.level}`;
+  const ts = new Date(entry.ts * 1000).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
+  const icon = LOG_ICONS[entry.level] || '  ';
+  const levelPad = (entry.level + '    ').slice(0, 7);
+
+  // Highlight key words
+  let msg = escapeHtml(entry.msg);
+  msg = msg.replace(/(LONG|BUY|Paper OPEN)/g, '<span style="color:#00ff88;font-weight:bold">$1</span>');
+  msg = msg.replace(/(SHORT|SELL)/g, '<span style="color:#ff4444;font-weight:bold">$1</span>');
+  msg = msg.replace(/(Paper CLOSE)/g, '<span style="color:#ff9800;font-weight:bold">$1</span>');
+  msg = msg.replace(/(Signal:)/g, '<span style="color:#00bfff;font-weight:bold">$1</span>');
+  msg = msg.replace(/(=== Cycle #\d+ ===)/g, '<span style="color:#b388ff;font-weight:bold">$1</span>');
+  msg = msg.replace(/(Fetching OHLCV:)/g, '<span style="color:#80deea">$1</span>');
+  msg = msg.replace(/(Fetched \d+ candles:)/g, '<span style="color:#80deea">$1</span>');
+  msg = msg.replace(/(P&L=[+-]?\d+\.\d+%)/g, (match) => {
+    const isPos = !match.includes('-');
+    return `<span style="color:${isPos ? '#00ff88' : '#ff4444'};font-weight:bold">${match}</span>`;
+  });
+
+  div.innerHTML = `<span style="color:#555">${ts}</span> ${icon}<span style="color:#666">${levelPad}</span> ${msg}`;
+  container.appendChild(div);
+
+  // Limit DOM nodes
+  while (container.children.length > 2000) {
+    container.removeChild(container.firstChild);
+  }
+
+  if (logAutoScroll) {
+    container.scrollTop = container.scrollHeight;
+  }
+}
+
+function passesFilter(entry) {
+  const levelFilter = document.getElementById('log-level-filter').value;
+  const searchFilter = document.getElementById('log-search').value.toLowerCase();
+
+  if (levelFilter !== 'all' && LOG_LEVELS[entry.level] < LOG_LEVELS[levelFilter]) return false;
+  if (searchFilter && !entry.msg.toLowerCase().includes(searchFilter)) return false;
+  return true;
+}
+
+function filterLogs() {
+  // Re-render all logs with current filters
+  const container = document.getElementById('log-container');
+  container.innerHTML = '';
+  logEntries.forEach(entry => {
+    if (passesFilter(entry)) {
+      // Re-use appendLogEntry but avoid double-push
+      const div = document.createElement('div');
+      div.className = `log-line log-${entry.level}`;
+      const ts = new Date(entry.ts * 1000).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3 });
+      const icon = LOG_ICONS[entry.level] || '  ';
+      const levelPad = (entry.level + '    ').slice(0, 7);
+      let msg = escapeHtml(entry.msg);
+      msg = msg.replace(/(LONG|BUY|Paper OPEN)/g, '<span style="color:#00ff88;font-weight:bold">$1</span>');
+      msg = msg.replace(/(SHORT|SELL)/g, '<span style="color:#ff4444;font-weight:bold">$1</span>');
+      msg = msg.replace(/(Paper CLOSE)/g, '<span style="color:#ff9800;font-weight:bold">$1</span>');
+      msg = msg.replace(/(Signal:)/g, '<span style="color:#00bfff;font-weight:bold">$1</span>');
+      msg = msg.replace(/(=== Cycle #\d+ ===)/g, '<span style="color:#b388ff;font-weight:bold">$1</span>');
+      msg = msg.replace(/(Fetching OHLCV:)/g, '<span style="color:#80deea">$1</span>');
+      msg = msg.replace(/(Fetched \d+ candles:)/g, '<span style="color:#80deea">$1</span>');
+      div.innerHTML = `<span style="color:#555">${ts}</span> ${icon}<span style="color:#666">${levelPad}</span> ${msg}`;
+      container.appendChild(div);
+    }
+  });
+  if (logAutoScroll) container.scrollTop = container.scrollHeight;
+}
+
+function toggleAutoScroll() {
+  logAutoScroll = document.getElementById('log-auto').checked;
+}
+
+function clearLogs() {
+  logEntries = [];
+  document.getElementById('log-container').innerHTML = '<div class="text-gray-600 text-xs">Logs cleared</div>';
+  document.getElementById('log-count').textContent = '0 entries';
+}
+
+function escapeHtml(str) {
+  return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
 // ─── Clock ───
 function updateClock() {
   document.getElementById('clock').textContent = new Date().toLocaleTimeString();
@@ -572,10 +722,17 @@ function updateClock() {
 
 // ─── Init ───
 connectWS();
+connectLogWS();
 refreshDashboard();
 setInterval(refreshDashboard, 5000);
 setInterval(updateClock, 1000);
 updateClock();
+
+// Load initial logs
+(async () => {
+  const data = await api('/logs?limit=500');
+  if (data.logs) data.logs.forEach(entry => appendLogEntry(entry));
+})();
 </script>
 </body>
 </html>"""

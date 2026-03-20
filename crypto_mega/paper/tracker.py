@@ -240,9 +240,13 @@ class PaperTracker:
             signal_strength=signal.strength,
         )
         self._positions[pos.id] = pos
-        logger.debug(
-            f"Paper position opened: {signal.symbol} {signal.direction.value} "
-            f"@ {signal.price} (strategy={signal.strategy_id[:8]})"
+        logger.info(
+            f"Paper OPEN: {signal.direction.value.upper()} {signal.symbol} "
+            f"@ {signal.price:.2f} | strategy={pos.strategy_name} "
+            f"(strength={signal.strength:.2f}"
+            f"{f', SL={signal.stop_loss:.2f}' if signal.stop_loss else ''}"
+            f"{f', TP={signal.take_profit:.2f}' if signal.take_profit else ''}"
+            f") | open positions: {len(self._positions)}"
         )
 
     def register_strategy(self, strategy_id: str, name: str) -> None:
@@ -264,6 +268,13 @@ class PaperTracker:
                 self._closed.append(pos)
                 to_remove.append(pos_id)
                 closed.append(pos)
+                pnl_sign = "+" if pos.realized_pnl_pct >= 0 else ""
+                logger.info(
+                    f"Paper CLOSE [{reason.upper()}]: {pos.direction.value.upper()} "
+                    f"{pos.symbol} | entry={pos.entry_price:.2f} exit={price:.2f} | "
+                    f"P&L={pnl_sign}{pos.realized_pnl_pct:.2f}% | "
+                    f"strategy={pos.strategy_name}"
+                )
 
                 for handler in self._on_close_handlers:
                     try:

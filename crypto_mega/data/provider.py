@@ -46,14 +46,25 @@ class DataProvider:
             age = datetime.utcnow() - cached.iloc[-1]["timestamp"]
             # Refresh if cache is older than 1 timeframe unit
             if age < self._timeframe_to_delta(timeframe):
+                logger.debug(f"Cache hit: {symbol} {timeframe} (age={age})")
                 return cached
 
+        logger.info(
+            f"Fetching OHLCV: {symbol} {timeframe} limit={limit}"
+        )
         since_ms = int(since.timestamp() * 1000) if since else None
         raw = await self._exchange.fetch_ohlcv(symbol, timeframe, since=since_ms, limit=limit)
 
         df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
         self._cache[cache_key] = df
+
+        last_close = df["close"].iloc[-1] if len(df) > 0 else 0
+        logger.info(
+            f"Fetched {len(df)} candles: {symbol} {timeframe} | "
+            f"last close={last_close:.2f} | "
+            f"range=[{df['low'].min():.2f} - {df['high'].max():.2f}]"
+        )
         return df
 
     async def fetch_multi(

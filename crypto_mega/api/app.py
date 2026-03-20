@@ -19,6 +19,38 @@ logging.basicConfig(
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 
+
+class RingBufferLogHandler(logging.Handler):
+    """Captures log records into a ring buffer for the UI log viewer."""
+
+    def __init__(self, capacity: int = 2000):
+        super().__init__()
+        self.capacity = capacity
+        self.records: list[dict] = []
+
+    def emit(self, record: logging.LogRecord) -> None:
+        entry = {
+            "ts": record.created,
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": self.format(record),
+        }
+        self.records.append(entry)
+        if len(self.records) > self.capacity:
+            self.records = self.records[-self.capacity:]
+
+    def get_recent(self, limit: int = 200, since: float = 0.0) -> list[dict]:
+        if since > 0:
+            return [r for r in self.records if r["ts"] > since][-limit:]
+        return self.records[-limit:]
+
+
+# Attach ring buffer to all crypto_mega loggers
+_log_buffer = RingBufferLogHandler(capacity=2000)
+_log_buffer.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+_log_buffer.setLevel(logging.DEBUG)
+logging.getLogger("crypto_mega").addHandler(_log_buffer)
+
 from crypto_mega.backtester.backtester import Backtester
 from crypto_mega.config.settings import RiskConfig, SystemConfig
 from crypto_mega.data.provider import DataProvider
@@ -659,6 +691,30 @@ async def connect_exchange(req: ExchangeConnectRequest):
         return {"status": "connected", "exchange": req.exchange_id, "sandbox": req.sandbox}
     except Exception as e:
         raise HTTPException(400, f"Connection failed: {e}")
+
+
+# ─── Logs ───
+
+@app.get("/logs")
+async def get_logs(limit: int = 200, since: float = 0.0):
+    """Get recent log entries from ring buffer."""
+    return {"logs": _log_buffer.get_recent(limit, since)}
+
+
+@app.websocket("/ws/logs")
+async def websocket_logs(ws: WebSocket):
+    """Stream logs in real-time via WebSocket."""
+    await ws.accept()
+    last_ts = time.time()
+    try:
+        while True:
+            entries = _log_buffer.get_recent(limit=50, since=last_ts)
+            if entries:
+                last_ts = entries[-1]["ts"]
+                await ws.send_json({"type": "logs", "entries": entries})
+            await asyncio.sleep(0.5)
+    except WebSocketDisconnect:
+        pass
 
 
 # ─── Web UI ───

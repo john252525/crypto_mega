@@ -84,6 +84,10 @@ class SignalEngine:
             )
 
             # Generate signals
+            logger.info(
+                f"Running strategy: {config.name} | "
+                f"symbols={config.symbols} | data_keys={list(data.keys())}"
+            )
             signals = instance.strategy.generate_signals(data)
 
             # Tag signals with strategy info
@@ -93,6 +97,20 @@ class SignalEngine:
             instance.signals_generated += len(signals)
             instance.last_run = time.time()
             instance.status = StrategyStatus.RUNNING
+
+            # Log signal details
+            for sig in signals:
+                logger.info(
+                    f"Signal: {config.name} -> {sig.direction.value.upper()} "
+                    f"{sig.symbol} @ {sig.price:.2f} "
+                    f"(strength={sig.strength:.2f}"
+                    f"{f', SL={sig.stop_loss:.2f}' if sig.stop_loss else ''}"
+                    f"{f', TP={sig.take_profit:.2f}' if sig.take_profit else ''}"
+                    f")"
+                )
+
+            if not signals:
+                logger.debug(f"Strategy {config.name}: no signals this cycle")
 
             # Dispatch to handlers
             for handler in self._signal_handlers:
@@ -115,7 +133,9 @@ class SignalEngine:
         self._running = True
         logger.info(f"Signal engine started with {len(self._instances)} strategies")
 
+        cycle = 0
         while self._running:
+            cycle += 1
             # Sort by priority — higher priority runs first / gets more cycles
             active = [
                 inst for inst in self._instances.values()
@@ -123,9 +143,23 @@ class SignalEngine:
             ]
             active.sort(key=lambda x: x.config.priority, reverse=True)
 
+            logger.info(
+                f"=== Cycle #{cycle} === "
+                f"{len(active)} strategies | "
+                f"next in {interval_seconds}s"
+            )
+            t0 = time.time()
             tasks = [self.run_once(inst.config.id) for inst in active]
             if tasks:
-                await asyncio.gather(*tasks, return_exceptions=True)
+                results = await asyncio.gather(*tasks, return_exceptions=True)
+                total_signals = sum(
+                    len(r) for r in results if isinstance(r, list)
+                )
+                elapsed = time.time() - t0
+                logger.info(
+                    f"Cycle #{cycle} done in {elapsed:.2f}s | "
+                    f"{total_signals} signals generated"
+                )
 
             await asyncio.sleep(interval_seconds)
 
