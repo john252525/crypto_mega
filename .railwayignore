@@ -1,0 +1,17 @@
+# Exclude from Railway deployments (speeds up docker builds)
+.git
+.github
+.pytest_cache
+.ruff_cache
+*.pyc
+__pycache__
+*.egg-info
+.env
+.venv
+venv
+*.log
+data/*.csv
+data/*.parquet
+*.db
+*.sqlite3
+tests/

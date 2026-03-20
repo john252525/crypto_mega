@@ -2,6 +2,17 @@
 
 Pluggable, scalable crypto trading system with dynamic strategy loading, resource management, backtesting, and auto-execution.
 
+## ⚡ Deploy to Railway (2 min)
+
+```bash
+railway init
+# Add PostgreSQL 15 and Redis 7 plugins in dashboard
+railway variables set EXCHANGE_API_KEY=xxx EXCHANGE_API_SECRET=xxx EXCHANGE_SANDBOX=true
+railway up
+```
+
+That's it! Railway auto-creates 3 services (api, engine, worker) from Procfile, injects DATABASE_URL/REDIS_URL, deploys, and watches health checks.
+
 ## Architecture
 
 ```
