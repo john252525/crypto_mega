@@ -498,6 +498,171 @@ async def deactivate_kill_switch():
 
 # ─── System endpoints ───
 
+@app.get("/", include_in_schema=False)
+async def root():
+    """Landing page — system overview and quick start."""
+    from fastapi.responses import HTMLResponse
+    from string import Template
+
+    registered = strategy_loader.list_all()
+    running = signal_engine.get_status()
+    risk_status = risk_manager.get_status()
+
+    strat_items = ""
+    if registered:
+        for name in registered:
+            strat_items += "<li><code>" + name + "</code></li>"
+    else:
+        strat_items = "<li><em>None loaded — POST /strategies/load-directory first</em></li>"
+
+    running_rows = ""
+    if running:
+        for sid, info in running.items():
+            sc = "#4CAF50" if info["status"] == "running" else "#ff9800"
+            running_rows += (
+                "<tr><td><code>" + sid[:8] + "...</code></td>"
+                "<td>" + info["name"] + "</td>"
+                '<td style="color:' + sc + '">' + info["status"] + "</td>"
+                "<td>" + str(info["signals"]) + "</td>"
+                "<td>" + str(info["priority"]) + "</td></tr>"
+            )
+
+    db_label = "connected" if db_session else "no db"
+    db_class = "status" if db_session else "status warn"
+    equity = f"${risk_status['equity']:,.2f}"
+    drawdown = f"{risk_status['drawdown_pct']:.1f}%"
+    ks_label = "ACTIVE" if risk_status["kill_switch"] else "off"
+    ks_class = "status warn" if risk_status["kill_switch"] else "status"
+
+    running_table = ""
+    if running_rows:
+        running_table = (
+            '<div class="card"><h3>Running Strategies</h3>'
+            "<table><tr><th>ID</th><th>Name</th><th>Status</th>"
+            "<th>Signals</th><th>Priority</th></tr>"
+            + running_rows + "</table></div>"
+        )
+
+    html = Template("""<!DOCTYPE html>
+<html>
+<head>
+    <title>CryptoMega</title>
+    <meta charset="utf-8">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: 'SF Mono', 'Fira Code', monospace; background: #0a0a0a; color: #e0e0e0; padding: 40px; max-width: 1000px; margin: 0 auto; }
+        h1 { color: #00ff88; font-size: 28px; margin-bottom: 5px; }
+        h2 { color: #888; font-size: 14px; font-weight: normal; margin-bottom: 30px; }
+        h3 { color: #00bfff; margin: 25px 0 10px; font-size: 16px; }
+        .card { background: #151515; border: 1px solid #2a2a2a; border-radius: 8px; padding: 20px; margin: 15px 0; }
+        .status { display: inline-block; background: #1a3a1a; color: #4CAF50; padding: 3px 10px; border-radius: 4px; font-size: 13px; }
+        .status.warn { background: #3a2a1a; color: #ff9800; }
+        a { color: #00bfff; text-decoration: none; }
+        a:hover { text-decoration: underline; }
+        code { background: #1a1a2e; padding: 2px 6px; border-radius: 3px; color: #ff6b9d; font-size: 13px; }
+        pre { background: #111; border: 1px solid #333; border-radius: 6px; padding: 15px; overflow-x: auto; font-size: 13px; line-height: 1.5; margin: 10px 0; }
+        table { width: 100%; border-collapse: collapse; font-size: 13px; }
+        th { text-align: left; color: #888; padding: 8px; border-bottom: 1px solid #333; }
+        td { padding: 8px; border-bottom: 1px solid #1a1a1a; }
+        ul { padding-left: 20px; line-height: 1.8; }
+        .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+        @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+        .ep { margin: 4px 0; }
+        .m { display: inline-block; width: 55px; font-weight: bold; font-size: 11px; }
+        .g { color: #4CAF50; } .p { color: #ff9800; }
+    </style>
+</head>
+<body>
+    <h1>CryptoMega</h1>
+    <h2>Massive crypto trading signal system</h2>
+
+    <div class="grid">
+        <div class="card">
+            <h3>System</h3>
+            <p>DB: <span class="$db_class">$db_label</span></p>
+            <p style="margin-top:8px">Strategies loaded: <strong>$n_registered</strong></p>
+            <p>Running: <strong>$n_running</strong></p>
+            <p>WebSocket clients: <strong>$n_ws</strong></p>
+        </div>
+        <div class="card">
+            <h3>Risk</h3>
+            <p>Equity: <strong>$equity</strong></p>
+            <p>Drawdown: <strong>$drawdown</strong></p>
+            <p>Open positions: <strong>$n_positions</strong></p>
+            <p>Kill switch: <span class="$ks_class">$ks_label</span></p>
+        </div>
+    </div>
+
+    <div class="card">
+        <h3>Available Strategies</h3>
+        <ul>$strat_items</ul>
+    </div>
+
+    $running_table
+
+    <div class="card">
+        <h3>Quick Start</h3>
+        <p>1. Load example strategies:</p>
+        <pre>curl -X POST /strategies/load-directory?directory=strategies_user</pre>
+        <p>2. Run backtest:</p>
+        <pre>curl -X POST /backtest -H "Content-Type: application/json" \
+  -d '{"strategy_name": "SMACrossover", "symbols": ["BTC/USDT"]}'</pre>
+        <p>3. Grid search (find best parameters):</p>
+        <pre>curl -X POST /backtest -H "Content-Type: application/json" \
+  -d '{"strategy_name": "SMACrossover", "symbols": ["BTC/USDT"],
+       "param_grid": {"fast_period": [5,10,15], "slow_period": [30,50,100]}}'</pre>
+        <p>4. Load custom strategy from code:</p>
+        <pre>curl -X POST /strategies/load-code -H "Content-Type: application/json" \
+  -d '{"name": "my_strat", "symbols": ["BTC/USDT"],
+       "code": "class MyStrat(BaseStrategy):\n  def generate_signals(self, data):\n    return []"}'</pre>
+        <p>Or just use <a href="/docs">interactive Swagger docs &rarr;</a></p>
+    </div>
+
+    <div class="card">
+        <h3>API Endpoints</h3>
+        <div class="ep"><span class="m g">GET</span> <a href="/docs">/docs</a> &mdash; Interactive API docs (Swagger UI)</div>
+        <div class="ep"><span class="m g">GET</span> <a href="/health">/health</a> &mdash; Health check</div>
+        <div class="ep"><span class="m g">GET</span> <a href="/status">/status</a> &mdash; Full system status</div>
+        <div class="ep"><span class="m g">GET</span> <a href="/strategies">/strategies</a> &mdash; List strategies</div>
+        <div class="ep"><span class="m p">POST</span> /strategies/load-code &mdash; Load strategy from code</div>
+        <div class="ep"><span class="m p">POST</span> /strategies/load-directory &mdash; Load from file directory</div>
+        <div class="ep"><span class="m p">POST</span> /backtest &mdash; Run backtest / grid search</div>
+        <div class="ep"><span class="m g">GET</span> <a href="/resources">/resources</a> &mdash; Resource allocation</div>
+        <div class="ep"><span class="m p">POST</span> /resources/priority &mdash; Set strategy priority</div>
+        <div class="ep"><span class="m g">GET</span> <a href="/execution/pending">/execution/pending</a> &mdash; Pending signals</div>
+        <div class="ep"><span class="m p">POST</span> /execution/approve &mdash; Approve trade execution</div>
+        <div class="ep"><span class="m g">GET</span> <a href="/monitor/stats">/monitor/stats</a> &mdash; Performance + recommendations</div>
+        <div class="ep"><span class="m g">GET</span> <a href="/monitor/alerts">/monitor/alerts</a> &mdash; Divergence alerts</div>
+        <div class="ep"><span class="m g">GET</span> <a href="/risk">/risk</a> &mdash; Risk / portfolio status</div>
+        <div class="ep"><span class="m p">POST</span> /risk/kill-switch/activate &mdash; Emergency stop</div>
+        <div class="ep"><span class="m p">POST</span> /risk/kill-switch/deactivate &mdash; Resume trading</div>
+        <br>
+        <div class="ep"><strong>WebSocket:</strong></div>
+        <div class="ep"><code>/ws/signals</code> &mdash; Real-time signal stream</div>
+        <div class="ep"><code>/ws/monitor</code> &mdash; Live stats push (every 5s)</div>
+    </div>
+
+    <div class="card" style="border-color: #333; color: #666; font-size: 12px;">
+        CryptoMega v0.1.0 | <a href="/docs">Swagger</a> | <a href="/redoc">ReDoc</a>
+    </div>
+</body>
+</html>""").safe_substitute(
+        db_class=db_class,
+        db_label=db_label,
+        n_registered=len(registered),
+        n_running=len(running),
+        n_ws=len(ws_manager.active),
+        equity=equity,
+        drawdown=drawdown,
+        n_positions=risk_status["positions"],
+        ks_class=ks_class,
+        ks_label=ks_label,
+        strat_items=strat_items,
+        running_table=running_table,
+    )
+    return HTMLResponse(content=html)
+
+
 @app.get("/health")
 async def health():
     return {
