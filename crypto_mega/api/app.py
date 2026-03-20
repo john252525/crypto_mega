@@ -1,11 +1,15 @@
-"""FastAPI application — REST API for the entire system."""
+"""FastAPI application — REST API + WebSocket for the entire system."""
 
 from __future__ import annotations
 
+import asyncio
+import json
 import logging
+import time
+from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
 
 from crypto_mega.backtester.backtester import Backtester
@@ -17,13 +21,44 @@ from crypto_mega.monitor.monitor import PerformanceMonitor
 from crypto_mega.resource_manager.manager import ResourceManager
 from crypto_mega.risk.risk_manager import RiskManager
 from crypto_mega.strategies.loader import strategy_loader
-from crypto_mega.utils.types import StrategyConfig, TimeFrame
+from crypto_mega.utils.types import Signal, StrategyConfig, TimeFrame
 
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="CryptoMega", version="0.1.0", description="Massive crypto trading signal system")
 
-# ─── Global state (initialized on startup) ───
+# ─── WebSocket connection manager ───
+
+class ConnectionManager:
+    """Manages WebSocket connections for real-time signal streaming."""
+
+    def __init__(self):
+        self.active: list[WebSocket] = []
+
+    async def connect(self, ws: WebSocket):
+        await ws.accept()
+        self.active.append(ws)
+        logger.info(f"WebSocket connected, total: {len(self.active)}")
+
+    def disconnect(self, ws: WebSocket):
+        self.active.remove(ws)
+        logger.info(f"WebSocket disconnected, total: {len(self.active)}")
+
+    async def broadcast(self, message: dict):
+        dead = []
+        for ws in self.active:
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.active.remove(ws)
+
+
+ws_manager = ConnectionManager()
+
+
+# ─── App lifecycle ───
+
 config = SystemConfig()
 data_provider = DataProvider()
 signal_engine = SignalEngine(data_provider)
@@ -32,6 +67,57 @@ resource_manager = ResourceManager(total_workers=config.resources.max_workers, m
 monitor = PerformanceMonitor()
 risk_manager = RiskManager(config.risk)
 backtester = Backtester()
+db_session = None
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Startup/shutdown lifecycle."""
+    global db_session
+
+    # Init database
+    from crypto_mega.data.models import init_db
+    db_session = await init_db(config.db.url)
+    logger.info(f"Database initialized: {config.db.url[:30]}...")
+
+    # Load strategies from directory
+    strategy_loader.load_directory(config.strategies_dir)
+    logger.info(f"Loaded strategies from {config.strategies_dir}")
+
+    yield
+
+    # Cleanup
+    await data_provider.close()
+    await execution_engine.close_all()
+    logger.info("App shutdown complete")
+
+
+app = FastAPI(
+    title="CryptoMega",
+    version="0.1.0",
+    description="Massive crypto trading signal system",
+    lifespan=lifespan,
+)
+
+
+# ─── Signal broadcast hook ───
+
+async def broadcast_signal(signal: Signal):
+    """Broadcast signals to all WebSocket clients."""
+    await ws_manager.broadcast({
+        "type": "signal",
+        "data": {
+            "id": signal.id,
+            "strategy_id": signal.strategy_id[:8],
+            "symbol": signal.symbol,
+            "direction": signal.direction.value,
+            "strength": signal.strength,
+            "price": signal.price,
+            "timestamp": str(signal.timestamp),
+        },
+    })
+
+signal_engine.on_signal(broadcast_signal)
 
 
 # ─── Request/Response models ───
@@ -64,6 +150,7 @@ class BacktestRequest(BaseModel):
     param_grid: dict[str, list] | None = None
     max_combinations: int | None = None
     initial_capital: float = 10000.0
+    async_mode: bool = False  # if True, run via Celery
 
 
 class ExecuteSignalRequest(BaseModel):
@@ -75,6 +162,58 @@ class ApproveAdjustmentRequest(BaseModel):
     index: int
 
 
+# ─── WebSocket endpoints ───
+
+@app.websocket("/ws/signals")
+async def websocket_signals(ws: WebSocket):
+    """
+    Real-time signal stream via WebSocket.
+    Connect with: ws://host:port/ws/signals
+    Receives JSON messages with type="signal" for every new signal.
+    """
+    await ws_manager.connect(ws)
+    try:
+        while True:
+            # Client can send commands (e.g., filter symbols, pause)
+            data = await ws.receive_text()
+            try:
+                msg = json.loads(data)
+                if msg.get("type") == "ping":
+                    await ws.send_json({"type": "pong", "timestamp": time.time()})
+                elif msg.get("type") == "status":
+                    await ws.send_json({
+                        "type": "status",
+                        "data": signal_engine.get_status(),
+                    })
+            except json.JSONDecodeError:
+                pass
+    except WebSocketDisconnect:
+        ws_manager.disconnect(ws)
+
+
+@app.websocket("/ws/monitor")
+async def websocket_monitor(ws: WebSocket):
+    """
+    Real-time monitoring stream.
+    Pushes performance stats every 5 seconds.
+    """
+    await ws_manager.connect(ws)
+    try:
+        while True:
+            await ws.send_json({
+                "type": "monitor",
+                "data": {
+                    "strategies": monitor.get_all_stats(),
+                    "risk": risk_manager.get_status(),
+                    "resources": resource_manager.get_status(),
+                    "alerts": monitor.get_alerts(limit=10),
+                },
+            })
+            await asyncio.sleep(5)
+    except WebSocketDisconnect:
+        ws_manager.disconnect(ws)
+
+
 # ─── Strategy endpoints ───
 
 @app.post("/strategies/load-code")
@@ -83,6 +222,25 @@ async def load_strategy_from_code(req: StrategyCodeRequest):
     classes = strategy_loader.load_from_code(req.code, req.name)
     if not classes:
         raise HTTPException(400, "No valid strategy classes found in code")
+
+    # Persist to DB
+    if db_session:
+        from crypto_mega.data.models import StrategyRecord
+        async with db_session() as session:
+            for cls in classes:
+                record = StrategyRecord(
+                    name=req.name,
+                    description=req.description,
+                    code=req.code,
+                    symbols=json.dumps(req.symbols),
+                    timeframes=",".join(req.timeframes),
+                    parameters=json.dumps(req.parameters),
+                    priority=req.priority,
+                    auto_execute=req.auto_execute,
+                    status="running",
+                )
+                session.add(record)
+            await session.commit()
 
     results = []
     for cls in classes:
@@ -99,6 +257,9 @@ async def load_strategy_from_code(req: StrategyCodeRequest):
         sid = signal_engine.add_strategy(strategy, cfg)
         resource_manager.set_allocation(sid, req.priority)
         results.append({"id": sid, "name": cls.__name__, "status": "loaded"})
+
+    # Broadcast to WebSocket clients
+    await ws_manager.broadcast({"type": "strategy_loaded", "data": results})
 
     return {"strategies": results}
 
@@ -175,11 +336,28 @@ async def approve_adjustment(req: ApproveAdjustmentRequest):
 
 @app.post("/backtest")
 async def run_backtest(req: BacktestRequest):
-    """Run backtest for a strategy."""
+    """Run backtest — sync or via Celery (async_mode=true)."""
     cls = strategy_loader.get(req.strategy_name)
     if not cls:
         raise HTTPException(404, f"Strategy not found: {req.strategy_name}")
 
+    # Async mode — dispatch to Celery worker
+    if req.async_mode:
+        from crypto_mega.engine.tasks import run_backtest_task, run_grid_search_task
+
+        if req.param_grid:
+            task = run_grid_search_task.delay(
+                req.strategy_name, req.symbols, req.timeframes,
+                req.param_grid, req.max_combinations, req.initial_capital,
+            )
+        else:
+            task = run_backtest_task.delay(
+                req.strategy_name, req.symbols, req.timeframes,
+                req.parameters, req.initial_capital,
+            )
+        return {"task_id": task.id, "status": "submitted"}
+
+    # Sync mode
     cfg = StrategyConfig(
         name=req.strategy_name,
         symbols=req.symbols,
@@ -187,9 +365,7 @@ async def run_backtest(req: BacktestRequest):
         parameters=req.parameters,
     )
 
-    # Fetch historical data
     data = await data_provider.fetch_multi(req.symbols, req.timeframes, limit=500)
-
     bt = Backtester(initial_capital=req.initial_capital)
 
     if req.param_grid:
@@ -225,6 +401,17 @@ async def run_backtest(req: BacktestRequest):
             "profit_factor": round(result.profit_factor, 2),
             "run_time": round(result.run_time_sec, 3),
         }
+
+
+@app.get("/backtest/task/{task_id}")
+async def get_backtest_task_status(task_id: str):
+    """Check status of an async backtest task."""
+    from crypto_mega.engine.tasks import celery_app
+    result = celery_app.AsyncResult(task_id)
+    response = {"task_id": task_id, "status": result.state}
+    if result.ready():
+        response["result"] = result.result
+    return response
 
 
 # ─── Execution endpoints ───
@@ -278,12 +465,14 @@ async def get_risk_status():
 @app.post("/risk/kill-switch/activate")
 async def activate_kill_switch():
     risk_manager.activate_kill_switch()
+    await ws_manager.broadcast({"type": "kill_switch", "data": {"active": True}})
     return {"status": "KILL SWITCH ACTIVATED"}
 
 
 @app.post("/risk/kill-switch/deactivate")
 async def deactivate_kill_switch():
     risk_manager.deactivate_kill_switch()
+    await ws_manager.broadcast({"type": "kill_switch", "data": {"active": False}})
     return {"status": "kill switch deactivated"}
 
 
@@ -291,7 +480,11 @@ async def deactivate_kill_switch():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "strategies": len(signal_engine._instances)}
+    return {
+        "status": "ok",
+        "strategies": len(signal_engine._instances),
+        "ws_clients": len(ws_manager.active),
+    }
 
 
 @app.get("/status")
@@ -301,4 +494,5 @@ async def system_status():
         "resources": resource_manager.get_status(),
         "risk": risk_manager.get_status(),
         "monitor": monitor.get_all_stats(),
+        "ws_clients": len(ws_manager.active),
     }

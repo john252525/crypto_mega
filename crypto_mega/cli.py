@@ -21,12 +21,15 @@ def main():
 
 
 @main.command()
-@click.option("--host", default="0.0.0.0", help="API host")
-@click.option("--port", default=8000, help="API port")
-def serve(host: str, port: int):
+@click.option("--host", default=None, help="API host")
+@click.option("--port", default=None, type=int, help="API port")
+def serve(host: str | None, port: int | None):
     """Start the API server."""
+    import os
     import uvicorn
-    uvicorn.run("crypto_mega.api.app:app", host=host, port=port, reload=True)
+    h = host or os.getenv("HOST", "0.0.0.0")
+    p = port or int(os.getenv("PORT", "8000"))
+    uvicorn.run("crypto_mega.api.app:app", host=h, port=p, reload=True)
 
 
 @main.command()

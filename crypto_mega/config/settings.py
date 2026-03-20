@@ -1,4 +1,4 @@
-"""Global system configuration."""
+"""Global system configuration — reads from environment variables for deployment."""
 
 from __future__ import annotations
 
@@ -9,26 +9,37 @@ from pathlib import Path
 
 @dataclass
 class DatabaseConfig:
-    url: str = "sqlite+aiosqlite:///crypto_mega.db"
+    # Railway injects DATABASE_URL for PostgreSQL plugin
+    url: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///crypto_mega.db")
+
+    def __post_init__(self):
+        # Railway gives postgres:// but SQLAlchemy needs postgresql://
+        if self.url.startswith("postgres://"):
+            self.url = self.url.replace("postgres://", "postgresql+asyncpg://", 1)
+        elif self.url.startswith("postgresql://") and "+asyncpg" not in self.url:
+            self.url = self.url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 
 @dataclass
 class RedisConfig:
-    host: str = os.getenv("REDIS_HOST", "localhost")
-    port: int = int(os.getenv("REDIS_PORT", "6379"))
-    db: int = 0
+    # Railway injects REDIS_URL for Redis plugin
+    url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
 
     @property
-    def url(self) -> str:
-        return f"redis://{self.host}:{self.port}/{self.db}"
+    def celery_broker_url(self) -> str:
+        return self.url
+
+    @property
+    def celery_result_backend(self) -> str:
+        return self.url
 
 
 @dataclass
 class ExchangeConfig:
-    exchange_id: str = "binance"
-    api_key: str = ""
-    api_secret: str = ""
-    sandbox: bool = True  # ALWAYS start in sandbox/testnet
+    exchange_id: str = os.getenv("EXCHANGE_ID", "binance")
+    api_key: str = os.getenv("EXCHANGE_API_KEY", "")
+    api_secret: str = os.getenv("EXCHANGE_API_SECRET", "")
+    sandbox: bool = os.getenv("EXCHANGE_SANDBOX", "true").lower() == "true"
     rate_limit: int = 1200  # ms between requests
 
 
@@ -42,12 +53,12 @@ class ResourceConfig:
 
 @dataclass
 class RiskConfig:
-    max_portfolio_risk_pct: float = 2.0  # max % of portfolio at risk per trade
-    max_drawdown_pct: float = 10.0  # pause trading if drawdown exceeds this
-    max_position_size_pct: float = 5.0  # max % of portfolio in single position
-    max_open_positions: int = 20
-    max_daily_trades: int = 100
-    kill_switch_loss_pct: float = 15.0  # emergency stop
+    max_portfolio_risk_pct: float = float(os.getenv("MAX_RISK_PCT", "2.0"))
+    max_drawdown_pct: float = float(os.getenv("MAX_DRAWDOWN_PCT", "10.0"))
+    max_position_size_pct: float = float(os.getenv("MAX_POSITION_PCT", "5.0"))
+    max_open_positions: int = int(os.getenv("MAX_POSITIONS", "20"))
+    max_daily_trades: int = int(os.getenv("MAX_DAILY_TRADES", "100"))
+    kill_switch_loss_pct: float = float(os.getenv("KILL_SWITCH_PCT", "15.0"))
 
 
 @dataclass
@@ -57,6 +68,8 @@ class SystemConfig:
     exchanges: list[ExchangeConfig] = field(default_factory=lambda: [ExchangeConfig()])
     resources: ResourceConfig = field(default_factory=ResourceConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
-    strategies_dir: Path = Path("strategies_user")
+    strategies_dir: Path = Path(os.getenv("STRATEGIES_DIR", "strategies_user"))
     data_dir: Path = Path("data")
-    log_level: str = "INFO"
+    log_level: str = os.getenv("LOG_LEVEL", "INFO")
+    api_port: int = int(os.getenv("PORT", "8000"))  # Railway sets PORT
+    api_host: str = os.getenv("HOST", "0.0.0.0")

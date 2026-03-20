@@ -9,7 +9,9 @@ build/
 .env
 .venv/
 venv/
-data/
+data/*.csv
+data/*.parquet
+data/cache/
 *.log
 .pytest_cache/
 .ruff_cache/
