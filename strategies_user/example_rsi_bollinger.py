@@ -1,0 +1,98 @@
+"""
+Example Strategy: RSI + Bollinger Bands
+
+Mean-reversion strategy: buy when RSI is oversold AND price touches lower Bollinger Band.
+"""
+
+import numpy as np
+import pandas as pd
+
+from crypto_mega.strategies.base import BaseStrategy
+from crypto_mega.utils.types import Signal, SignalDirection, StrategyConfig
+
+
+class RSIBollinger(BaseStrategy):
+    """
+    RSI + Bollinger Bands mean-reversion.
+    LONG when RSI < oversold AND price < lower band.
+    SHORT when RSI > overbought AND price > upper band.
+    """
+
+    def __init__(self, config: StrategyConfig):
+        super().__init__(config)
+        self.rsi_period = config.parameters.get("rsi_period", 14)
+        self.bb_period = config.parameters.get("bb_period", 20)
+        self.bb_std = config.parameters.get("bb_std", 2.0)
+        self.rsi_oversold = config.parameters.get("rsi_oversold", 30)
+        self.rsi_overbought = config.parameters.get("rsi_overbought", 70)
+
+    def generate_signals(self, data: dict[str, pd.DataFrame]) -> list[Signal]:
+        signals = []
+
+        for key, df in data.items():
+            if len(df) < max(self.rsi_period, self.bb_period) + 5:
+                continue
+
+            symbol = key.split("_")[0]
+            df = df.copy()
+
+            # RSI
+            delta = df["close"].diff()
+            gain = delta.clip(lower=0).rolling(self.rsi_period).mean()
+            loss = (-delta.clip(upper=0)).rolling(self.rsi_period).mean()
+            rs = gain / loss.replace(0, np.nan)
+            df["rsi"] = 100 - (100 / (1 + rs))
+
+            # Bollinger Bands
+            df["bb_mid"] = df["close"].rolling(self.bb_period).mean()
+            bb_std = df["close"].rolling(self.bb_period).std()
+            df["bb_upper"] = df["bb_mid"] + self.bb_std * bb_std
+            df["bb_lower"] = df["bb_mid"] - self.bb_std * bb_std
+
+            df = df.dropna()
+            if len(df) < 1:
+                continue
+
+            last = df.iloc[-1]
+
+            if last["rsi"] < self.rsi_oversold and last["close"] <= last["bb_lower"]:
+                signals.append(Signal(
+                    symbol=symbol,
+                    direction=SignalDirection.LONG,
+                    strength=min(1.0, (self.rsi_oversold - last["rsi"]) / 30 + 0.5),
+                    price=last["close"],
+                    stop_loss=last["close"] * 0.97,
+                    take_profit=last["bb_mid"],
+                    metadata={
+                        "rsi": round(last["rsi"], 2),
+                        "bb_lower": round(last["bb_lower"], 2),
+                    },
+                ))
+
+            elif last["rsi"] > self.rsi_overbought and last["close"] >= last["bb_upper"]:
+                signals.append(Signal(
+                    symbol=symbol,
+                    direction=SignalDirection.SHORT,
+                    strength=min(1.0, (last["rsi"] - self.rsi_overbought) / 30 + 0.5),
+                    price=last["close"],
+                    stop_loss=last["close"] * 1.03,
+                    take_profit=last["bb_mid"],
+                    metadata={
+                        "rsi": round(last["rsi"], 2),
+                        "bb_upper": round(last["bb_upper"], 2),
+                    },
+                ))
+
+        return signals
+
+    def param_grid(self) -> dict[str, list]:
+        return {
+            "rsi_period": [7, 14, 21],
+            "bb_period": [15, 20, 25],
+            "bb_std": [1.5, 2.0, 2.5],
+            "rsi_oversold": [25, 30, 35],
+            "rsi_overbought": [65, 70, 75],
+        }
+
+    def required_history(self) -> int:
+        return max(self.rsi_period, self.bb_period) + 20
