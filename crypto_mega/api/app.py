@@ -5,12 +5,19 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from contextlib import asynccontextmanager
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel
+
+# Configure logging early so startup issues are visible in Railway logs
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 from crypto_mega.backtester.backtester import Backtester
 from crypto_mega.config.settings import RiskConfig, SystemConfig
@@ -72,23 +79,36 @@ db_session = None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Startup/shutdown lifecycle."""
+    """Startup/shutdown lifecycle. Graceful — never crashes on missing deps."""
     global db_session
 
-    # Init database
-    from crypto_mega.data.models import init_db
-    db_session = await init_db(config.db.url)
-    logger.info(f"Database initialized: {config.db.url[:30]}...")
+    # Init database (optional — works without it)
+    try:
+        from crypto_mega.data.models import init_db
+        db_session = await init_db(config.db.url)
+        logger.info(f"Database initialized: {config.db.url[:30]}...")
+    except Exception as e:
+        logger.warning(f"Database not available, running without persistence: {e}")
+        db_session = None
 
     # Load strategies from directory
-    strategy_loader.load_directory(config.strategies_dir)
-    logger.info(f"Loaded strategies from {config.strategies_dir}")
+    try:
+        strategy_loader.load_directory(config.strategies_dir)
+        logger.info(f"Loaded strategies from {config.strategies_dir}")
+    except Exception as e:
+        logger.warning(f"Could not load strategies: {e}")
 
     yield
 
     # Cleanup
-    await data_provider.close()
-    await execution_engine.close_all()
+    try:
+        await data_provider.close()
+    except Exception:
+        pass
+    try:
+        await execution_engine.close_all()
+    except Exception:
+        pass
     logger.info("App shutdown complete")
 
 
@@ -482,6 +502,7 @@ async def deactivate_kill_switch():
 async def health():
     return {
         "status": "ok",
+        "db": "connected" if db_session else "unavailable",
         "strategies": len(signal_engine._instances),
         "ws_clients": len(ws_manager.active),
     }
