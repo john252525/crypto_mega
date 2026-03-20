@@ -196,3 +196,181 @@ class TestResourceManager:
         assert len(rm.get_pending_adjustments()) > 0
         a = rm.get_allocation("strat1")
         assert a.priority == 50  # unchanged until approved
+
+
+# ─── Paper Tracker Tests ───
+
+class TestPaperTracker:
+    def test_open_position_from_signal(self):
+        from crypto_mega.paper.tracker import PaperTracker
+        import asyncio
+
+        tracker = PaperTracker()
+        tracker.register_strategy("strat1", "TestStrategy")
+        signal = Signal(
+            strategy_id="strat1",
+            symbol="BTC/USDT",
+            direction=SignalDirection.LONG,
+            strength=0.8,
+            price=50000.0,
+            stop_loss=49000.0,
+            take_profit=52000.0,
+        )
+        asyncio.get_event_loop().run_until_complete(tracker.handle_signal(signal))
+        positions = tracker.get_open_positions()
+        assert len(positions) == 1
+        assert positions[0]["symbol"] == "BTC/USDT"
+        assert positions[0]["direction"] == "long"
+        assert positions[0]["entry_price"] == 50000.0
+
+    def test_price_update_and_pnl(self):
+        from crypto_mega.paper.tracker import PaperTracker, PaperPosition
+
+        tracker = PaperTracker()
+        tracker.register_strategy("strat1", "TestStrategy")
+        pos = PaperPosition(
+            strategy_id="strat1",
+            strategy_name="TestStrategy",
+            symbol="BTC/USDT",
+            direction=SignalDirection.LONG,
+            entry_price=50000.0,
+            current_price=50000.0,
+            stop_loss=49000.0,
+            take_profit=52000.0,
+        )
+        tracker._positions[pos.id] = pos
+
+        # Price goes up
+        tracker.update_price("BTC/USDT", 51000.0)
+        assert pos.unrealized_pnl > 0
+        assert pos.unrealized_pnl_pct == pytest.approx(2.0, abs=0.01)
+
+    def test_stop_loss_trigger(self):
+        from crypto_mega.paper.tracker import PaperTracker, PaperPosition
+
+        tracker = PaperTracker()
+        pos = PaperPosition(
+            strategy_id="strat1",
+            symbol="BTC/USDT",
+            direction=SignalDirection.LONG,
+            entry_price=50000.0,
+            stop_loss=49000.0,
+        )
+        tracker._positions[pos.id] = pos
+
+        closed = tracker.update_price("BTC/USDT", 48500.0)
+        assert len(closed) == 1
+        assert closed[0].close_reason == "sl"
+        assert closed[0].realized_pnl < 0
+
+    def test_take_profit_trigger(self):
+        from crypto_mega.paper.tracker import PaperTracker, PaperPosition
+
+        tracker = PaperTracker()
+        pos = PaperPosition(
+            strategy_id="strat1",
+            symbol="BTC/USDT",
+            direction=SignalDirection.LONG,
+            entry_price=50000.0,
+            take_profit=52000.0,
+        )
+        tracker._positions[pos.id] = pos
+
+        closed = tracker.update_price("BTC/USDT", 52500.0)
+        assert len(closed) == 1
+        assert closed[0].close_reason == "tp"
+        assert closed[0].realized_pnl > 0
+
+    def test_short_position(self):
+        from crypto_mega.paper.tracker import PaperTracker, PaperPosition
+
+        tracker = PaperTracker()
+        pos = PaperPosition(
+            strategy_id="strat1",
+            symbol="ETH/USDT",
+            direction=SignalDirection.SHORT,
+            entry_price=3000.0,
+            stop_loss=3100.0,
+            take_profit=2800.0,
+        )
+        tracker._positions[pos.id] = pos
+
+        # Price drops — good for shorts
+        tracker.update_price("ETH/USDT", 2900.0)
+        assert pos.unrealized_pnl > 0
+
+        # Hit TP
+        closed = tracker.update_price("ETH/USDT", 2750.0)
+        assert len(closed) == 1
+        assert closed[0].close_reason == "tp"
+
+    def test_leaderboard(self):
+        from crypto_mega.paper.tracker import PaperTracker, PaperPosition
+        from datetime import datetime, timedelta
+
+        tracker = PaperTracker()
+        tracker.register_strategy("strat_a", "WinnerStrat")
+        tracker.register_strategy("strat_b", "LoserStrat")
+
+        now = datetime.utcnow()
+
+        # Winning closed positions for strat_a
+        for i in range(5):
+            pos = PaperPosition(
+                strategy_id="strat_a",
+                strategy_name="WinnerStrat",
+                symbol="BTC/USDT",
+                direction=SignalDirection.LONG,
+                entry_price=50000.0,
+            )
+            pos.close(51000.0, "tp")
+            tracker._closed.append(pos)
+
+        # Losing closed positions for strat_b
+        for i in range(5):
+            pos = PaperPosition(
+                strategy_id="strat_b",
+                strategy_name="LoserStrat",
+                symbol="BTC/USDT",
+                direction=SignalDirection.LONG,
+                entry_price=50000.0,
+            )
+            pos.close(49000.0, "sl")
+            tracker._closed.append(pos)
+
+        lb = tracker.get_leaderboard()
+        assert len(lb) == 2
+        assert lb[0]["strategy_name"] == "WinnerStrat"
+        assert lb[0]["total_pnl_pct"] > 0
+        assert lb[1]["strategy_name"] == "LoserStrat"
+        assert lb[1]["total_pnl_pct"] < 0
+
+    def test_hold_signal_ignored(self):
+        from crypto_mega.paper.tracker import PaperTracker
+        import asyncio
+
+        tracker = PaperTracker()
+        signal = Signal(
+            strategy_id="strat1",
+            symbol="BTC/USDT",
+            direction=SignalDirection.HOLD,
+            strength=1.0,
+            price=50000.0,
+        )
+        asyncio.get_event_loop().run_until_complete(tracker.handle_signal(signal))
+        assert len(tracker.get_open_positions()) == 0
+
+    def test_weak_signal_ignored(self):
+        from crypto_mega.paper.tracker import PaperTracker
+        import asyncio
+
+        tracker = PaperTracker()
+        signal = Signal(
+            strategy_id="strat1",
+            symbol="BTC/USDT",
+            direction=SignalDirection.LONG,
+            strength=0.1,  # too weak
+            price=50000.0,
+        )
+        asyncio.get_event_loop().run_until_complete(tracker.handle_signal(signal))
+        assert len(tracker.get_open_positions()) == 0

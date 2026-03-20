@@ -23,8 +23,9 @@ from crypto_mega.backtester.backtester import Backtester
 from crypto_mega.config.settings import RiskConfig, SystemConfig
 from crypto_mega.data.provider import DataProvider
 from crypto_mega.engine.signal_engine import SignalEngine
-from crypto_mega.execution.executor import ExecutionEngine
+from crypto_mega.execution.executor import ExecutionEngine, ExchangeConnection
 from crypto_mega.monitor.monitor import PerformanceMonitor
+from crypto_mega.paper.tracker import PaperTracker
 from crypto_mega.resource_manager.manager import ResourceManager
 from crypto_mega.risk.risk_manager import RiskManager
 from crypto_mega.strategies.loader import strategy_loader
@@ -73,8 +74,10 @@ execution_engine = ExecutionEngine()
 resource_manager = ResourceManager(total_workers=config.resources.max_workers, mode="hybrid")
 monitor = PerformanceMonitor()
 risk_manager = RiskManager(config.risk)
+paper_tracker = PaperTracker()
 backtester = Backtester()
 db_session = None
+_engine_task = None  # background task for signal engine loop
 
 
 @asynccontextmanager
@@ -138,6 +141,7 @@ async def broadcast_signal(signal: Signal):
     })
 
 signal_engine.on_signal(broadcast_signal)
+signal_engine.on_signal(paper_tracker.handle_signal)
 
 
 # ─── Request/Response models ───
@@ -180,6 +184,13 @@ class ExecuteSignalRequest(BaseModel):
 
 class ApproveAdjustmentRequest(BaseModel):
     index: int
+
+
+class ExchangeConnectRequest(BaseModel):
+    exchange_id: str = "binance"
+    api_key: str = ""
+    api_secret: str = ""
+    sandbox: bool = True
 
 
 # ─── WebSocket endpoints ───
@@ -494,6 +505,111 @@ async def deactivate_kill_switch():
     risk_manager.deactivate_kill_switch()
     await ws_manager.broadcast({"type": "kill_switch", "data": {"active": False}})
     return {"status": "kill switch deactivated"}
+
+
+# ─── Paper tracker endpoints ───
+
+@app.get("/paper/leaderboard")
+async def paper_leaderboard(sort_by: str = "total_pnl_pct", limit: int = 50):
+    """Strategy leaderboard based on paper trading results."""
+    return {"leaderboard": paper_tracker.get_leaderboard(sort_by, limit)}
+
+
+@app.get("/paper/positions/open")
+async def paper_positions_open(strategy_id: str | None = None):
+    return {"positions": paper_tracker.get_open_positions(strategy_id)}
+
+
+@app.get("/paper/positions/closed")
+async def paper_positions_closed(strategy_id: str | None = None, limit: int = 100):
+    return {"positions": paper_tracker.get_closed_positions(strategy_id, limit)}
+
+
+@app.get("/paper/signals")
+async def paper_signals(limit: int = 100):
+    return {"signals": paper_tracker.get_signal_log(limit)}
+
+
+@app.get("/paper/stats/{strategy_id}")
+async def paper_stats(strategy_id: str):
+    """Detailed paper trading stats for a strategy."""
+    # Find full strategy ID from prefix
+    full_id = None
+    for sid in list(signal_engine._instances.keys()):
+        if sid.startswith(strategy_id):
+            full_id = sid
+            break
+    if not full_id:
+        raise HTTPException(404, "Strategy not found")
+    stats = paper_tracker.get_strategy_stats(full_id)
+    return stats.to_dict()
+
+
+@app.post("/paper/promote/{strategy_id}")
+async def promote_strategy_to_live(strategy_id: str):
+    """Promote a strategy to live trading (auto-execute signals)."""
+    full_id = None
+    for sid in list(signal_engine._instances.keys()):
+        if sid.startswith(strategy_id):
+            full_id = sid
+            break
+    if not full_id:
+        raise HTTPException(404, "Strategy not found")
+
+    execution_engine.approve_strategy_for_execution(full_id)
+    return {"status": "promoted", "strategy_id": full_id[:8], "message": "Signals will now be forwarded to exchange"}
+
+
+# ─── Engine control endpoints ───
+
+@app.post("/engine/start")
+async def start_engine(interval: float = 60.0):
+    """Start the signal engine loop."""
+    global _engine_task
+    if _engine_task and not _engine_task.done():
+        return {"status": "already_running"}
+
+    # Register strategy names in paper tracker
+    for sid, inst in signal_engine._instances.items():
+        paper_tracker.register_strategy(sid, inst.strategy.name)
+
+    _engine_task = asyncio.create_task(signal_engine.run_loop(interval))
+    return {"status": "started", "interval": interval, "strategies": len(signal_engine._instances)}
+
+
+@app.post("/engine/stop")
+async def stop_engine():
+    """Stop the signal engine loop."""
+    signal_engine.stop()
+    return {"status": "stopped"}
+
+
+# ─── Exchange connection endpoint ───
+
+@app.post("/exchange/connect")
+async def connect_exchange(req: ExchangeConnectRequest):
+    """Connect to a crypto exchange via ccxt."""
+    try:
+        conn = ExchangeConnection(
+            exchange_id=req.exchange_id,
+            api_key=req.api_key,
+            api_secret=req.api_secret,
+            sandbox=req.sandbox,
+        )
+        await execution_engine.add_exchange(conn)
+        return {"status": "connected", "exchange": req.exchange_id, "sandbox": req.sandbox}
+    except Exception as e:
+        raise HTTPException(400, f"Connection failed: {e}")
+
+
+# ─── Web UI ───
+
+@app.get("/ui", include_in_schema=False)
+async def dashboard_ui():
+    """Full web dashboard UI."""
+    from fastapi.responses import HTMLResponse
+    from crypto_mega.api.ui import DASHBOARD_HTML
+    return HTMLResponse(content=DASHBOARD_HTML)
 
 
 # ─── System endpoints ───
