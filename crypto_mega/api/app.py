@@ -598,7 +598,7 @@ async def promote_strategy_to_live(strategy_id: str):
 async def start_engine(
     interval: float = 60.0,
     symbols: str = "BTC/USDT,ETH/USDT",
-    exchange: str = "binance",
+    exchange: str = os.getenv("EXCHANGE_ID", "binance"),
 ):
     """Start the signal engine loop.
 

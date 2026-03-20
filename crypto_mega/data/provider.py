@@ -15,17 +15,56 @@ logger = logging.getLogger(__name__)
 class DataProvider:
     """Fetches and caches market data from exchanges."""
 
+    # Exchanges to try in order if the primary one fails (geo-blocked, etc.)
+    FALLBACK_EXCHANGES = ["bybit", "binanceus", "okx", "kucoin"]
+
     def __init__(self):
         self._cache: dict[str, pd.DataFrame] = {}
         self._exchange = None
+        self._exchange_id: str = ""
 
     async def init_exchange(self, exchange_id: str = "binance", config: dict[str, Any] | None = None):
-        """Initialize ccxt exchange (async)."""
+        """Initialize ccxt exchange (async). Falls back to other exchanges on geo-block."""
         import ccxt.async_support as ccxt_async
 
-        exchange_class = getattr(ccxt_async, exchange_id)
-        self._exchange = exchange_class(config or {})
-        logger.info(f"Initialized exchange: {exchange_id}")
+        candidates = [exchange_id] + [e for e in self.FALLBACK_EXCHANGES if e != exchange_id]
+
+        for eid in candidates:
+            if not hasattr(ccxt_async, eid):
+                logger.warning(f"Exchange {eid} not available in ccxt, skipping")
+                continue
+            exchange_class = getattr(ccxt_async, eid)
+            ex = exchange_class(config or {})
+            try:
+                # Quick connectivity check — fetch 1 candle
+                await ex.fetch_ohlcv("BTC/USDT", "1h", limit=1)
+                self._exchange = ex
+                self._exchange_id = eid
+                if eid != exchange_id:
+                    logger.warning(
+                        f"{exchange_id} is geo-blocked from this server. "
+                        f"Fell back to {eid}"
+                    )
+                logger.info(f"Initialized exchange: {eid}")
+                return
+            except Exception as e:
+                err_str = str(e)
+                await ex.close()
+                if "451" in err_str or "restricted location" in err_str.lower():
+                    logger.warning(f"{eid} geo-blocked (HTTP 451), trying next...")
+                    continue
+                elif "NotSupported" in err_str or "not available" in err_str.lower():
+                    logger.warning(f"{eid}: symbol not supported, trying next...")
+                    continue
+                else:
+                    # Other error — still try fallbacks
+                    logger.warning(f"{eid} failed: {e}, trying next...")
+                    continue
+
+        raise RuntimeError(
+            f"All exchanges failed ({', '.join(candidates)}). "
+            f"Check network / API keys / server location."
+        )
 
     async def close(self):
         if self._exchange:
