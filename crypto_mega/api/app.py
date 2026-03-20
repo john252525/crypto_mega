@@ -563,24 +563,83 @@ async def promote_strategy_to_live(strategy_id: str):
 # ─── Engine control endpoints ───
 
 @app.post("/engine/start")
-async def start_engine(interval: float = 60.0):
-    """Start the signal engine loop."""
+async def start_engine(
+    interval: float = 60.0,
+    symbols: str = "BTC/USDT,ETH/USDT",
+    exchange: str = "binance",
+):
+    """Start the signal engine loop.
+
+    This does everything needed in one call:
+    1. Init exchange connection for data (if not already connected)
+    2. Instantiate all registered strategies and add to engine
+    3. Register them in paper tracker
+    4. Start the signal generation loop
+    """
     global _engine_task
     if _engine_task and not _engine_task.done():
-        return {"status": "already_running"}
+        return {"status": "already_running", "strategies": len(signal_engine._instances)}
 
-    # Register strategy names in paper tracker
-    for sid, inst in signal_engine._instances.items():
-        paper_tracker.register_strategy(sid, inst.strategy.name)
+    # 1. Init exchange for live data
+    if data_provider._exchange is None:
+        try:
+            await data_provider.init_exchange(exchange, {"enableRateLimit": True})
+            logger.info(f"Data provider connected to {exchange}")
+        except Exception as e:
+            logger.warning(f"Could not connect to {exchange}: {e}")
+            return {"status": "error", "message": f"Exchange connection failed: {e}"}
 
+    # 2. Parse symbols
+    symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
+
+    # 3. Instantiate all registered strategies and add to engine
+    registered = strategy_loader.list_all()
+    added = []
+    for name, cls in registered.items():
+        # Skip if already running
+        already_running = any(
+            inst.strategy.name == name
+            for inst in signal_engine._instances.values()
+        )
+        if already_running:
+            continue
+
+        cfg = StrategyConfig(
+            name=name,
+            symbols=symbol_list,
+            timeframes=[TimeFrame.H1],
+            priority=50,
+        )
+        try:
+            strategy = cls(cfg)
+            sid = signal_engine.add_strategy(strategy, cfg)
+            resource_manager.set_allocation(sid, cfg.priority)
+            paper_tracker.register_strategy(sid, name)
+            added.append({"id": sid[:8], "name": name})
+        except Exception as e:
+            logger.error(f"Failed to instantiate {name}: {e}")
+
+    # 4. Start the loop
     _engine_task = asyncio.create_task(signal_engine.run_loop(interval))
-    return {"status": "started", "interval": interval, "strategies": len(signal_engine._instances)}
+
+    return {
+        "status": "started",
+        "interval": interval,
+        "exchange": exchange,
+        "symbols": symbol_list,
+        "strategies_added": added,
+        "total_running": len(signal_engine._instances),
+    }
 
 
 @app.post("/engine/stop")
 async def stop_engine():
     """Stop the signal engine loop."""
+    global _engine_task
     signal_engine.stop()
+    if _engine_task and not _engine_task.done():
+        _engine_task.cancel()
+    _engine_task = None
     return {"status": "stopped"}
 
 
@@ -716,22 +775,21 @@ async def root():
 
     $running_table
 
+    <div class="card" style="border-color: #00ff88; border-width: 2px;">
+        <h3 style="color: #00ff88;">Dashboard</h3>
+        <p style="margin-bottom: 15px;">Full web UI with leaderboard, signals, positions, and controls:</p>
+        <a href="/ui" style="display: inline-block; background: #00ff88; color: #0a0a0a; padding: 10px 30px; border-radius: 6px; font-weight: bold; text-decoration: none;">Open Dashboard &rarr;</a>
+    </div>
+
     <div class="card">
-        <h3>Quick Start</h3>
-        <p>1. Load example strategies:</p>
-        <pre>curl -X POST /strategies/load-directory?directory=strategies_user</pre>
-        <p>2. Run backtest:</p>
-        <pre>curl -X POST /backtest -H "Content-Type: application/json" \
-  -d '{"strategy_name": "SMACrossover", "symbols": ["BTC/USDT"]}'</pre>
-        <p>3. Grid search (find best parameters):</p>
-        <pre>curl -X POST /backtest -H "Content-Type: application/json" \
-  -d '{"strategy_name": "SMACrossover", "symbols": ["BTC/USDT"],
-       "param_grid": {"fast_period": [5,10,15], "slow_period": [30,50,100]}}'</pre>
-        <p>4. Load custom strategy from code:</p>
+        <h3>Quick Start (CLI)</h3>
+        <p>Or use the API directly:</p>
+        <pre>curl -X POST /engine/start?symbols=BTC/USDT,ETH/USDT&amp;exchange=binance</pre>
+        <p>Load custom strategy from code:</p>
         <pre>curl -X POST /strategies/load-code -H "Content-Type: application/json" \
   -d '{"name": "my_strat", "symbols": ["BTC/USDT"],
        "code": "class MyStrat(BaseStrategy):\n  def generate_signals(self, data):\n    return []"}'</pre>
-        <p>Or just use <a href="/docs">interactive Swagger docs &rarr;</a></p>
+        <p><a href="/docs">Swagger docs &rarr;</a></p>
     </div>
 
     <div class="card">

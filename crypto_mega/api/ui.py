@@ -208,9 +208,21 @@ tailwind.config = {
       <!-- Engine Control -->
       <div class="bg-card border border-border rounded-lg p-4">
         <h3 class="text-blue text-sm font-semibold mb-3">Engine Control</h3>
-        <div class="space-y-3">
-          <button onclick="startEngine()" class="w-full py-2 bg-accent/20 text-accent rounded hover:bg-accent/30 text-sm">Start Signal Engine</button>
-          <button onclick="stopEngine()" class="w-full py-2 bg-danger/20 text-danger rounded hover:bg-danger/30 text-sm">Stop Signal Engine</button>
+        <div class="space-y-2">
+          <label class="text-xs text-gray-500">Exchange</label>
+          <select id="engine-exchange" class="w-full bg-bg border border-border rounded px-3 py-2 text-sm">
+            <option value="binance">Binance</option>
+            <option value="bybit">Bybit</option>
+            <option value="okx">OKX</option>
+            <option value="kucoin">KuCoin</option>
+            <option value="gate">Gate.io</option>
+          </select>
+          <label class="text-xs text-gray-500">Symbols (comma-separated)</label>
+          <input id="engine-symbols" type="text" value="BTC/USDT,ETH/USDT" class="w-full bg-bg border border-border rounded px-3 py-2 text-sm">
+          <label class="text-xs text-gray-500">Interval (seconds)</label>
+          <input id="engine-interval" type="number" value="60" class="w-full bg-bg border border-border rounded px-3 py-2 text-sm">
+          <button onclick="startEngine()" class="w-full py-2 bg-accent/20 text-accent rounded hover:bg-accent/30 text-sm font-bold">Start Signal Engine</button>
+          <button onclick="stopEngine()" class="w-full py-2 bg-danger/20 text-danger rounded hover:bg-danger/30 text-sm">Stop Engine</button>
         </div>
         <div id="engine-status" class="mt-3 text-xs text-gray-500"></div>
       </div>
@@ -483,8 +495,18 @@ async function loadDir() {
 
 // ─── Control actions ───
 async function startEngine() {
-  const data = await post('/engine/start', {});
-  document.getElementById('engine-status').innerHTML = `<span class="text-profit">${JSON.stringify(data)}</span>`;
+  const exchange = document.getElementById('engine-exchange').value;
+  const symbols = document.getElementById('engine-symbols').value;
+  const interval = document.getElementById('engine-interval').value;
+  document.getElementById('engine-status').innerHTML = '<span class="text-warn">Connecting to exchange and starting...</span>';
+  const data = await post(`/engine/start?interval=${interval}&symbols=${encodeURIComponent(symbols)}&exchange=${exchange}`, {});
+  if (data.status === 'started') {
+    document.getElementById('engine-status').innerHTML = `<span class="text-profit">Running! ${data.total_running} strategies on ${data.exchange}<br>Symbols: ${data.symbols.join(', ')}<br>Strategies: ${data.strategies_added.map(s => s.name).join(', ')}</span>`;
+  } else if (data.status === 'already_running') {
+    document.getElementById('engine-status').innerHTML = `<span class="text-warn">Already running (${data.strategies} strategies)</span>`;
+  } else {
+    document.getElementById('engine-status').innerHTML = `<span class="text-loss">${JSON.stringify(data)}</span>`;
+  }
 }
 async function stopEngine() {
   const data = await post('/engine/stop', {});
