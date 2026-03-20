@@ -12,11 +12,19 @@ from crypto_mega.utils.types import Signal, SignalDirection, StrategyConfig
 
 
 class RSIBollinger(BaseStrategy):
-    """
-    RSI + Bollinger Bands mean-reversion.
-    LONG when RSI < oversold AND price < lower band.
-    SHORT when RSI > overbought AND price > upper band.
-    """
+    """RSI + Bollinger Bands mean-reversion."""
+
+    DESCRIPTION = (
+        "Mean-reversion strategy that catches bounces from extremes. "
+        "BUY when RSI shows oversold (<30) AND price is at the lower "
+        "Bollinger Band. SELL when RSI is overbought (>70) AND price "
+        "hits the upper band. Best for ranging/sideways markets. "
+        "Avoid during strong trends — will get chopped up."
+    )
+    CATEGORY = "mean-reversion"
+    RISK_LEVEL = "medium"
+    BEST_TIMEFRAMES = ["15m", "1h", "4h"]
+    BEST_MARKETS = ["ranging", "sideways"]
 
     def __init__(self, config: StrategyConfig):
         super().__init__(config)
@@ -92,6 +100,24 @@ class RSIBollinger(BaseStrategy):
             "bb_std": [1.5, 2.0, 2.5],
             "rsi_oversold": [25, 30, 35],
             "rsi_overbought": [65, 70, 75],
+        }
+
+    def param_defaults(self) -> dict:
+        return {
+            "rsi_period": 14,
+            "bb_period": 20,
+            "bb_std": 2.0,
+            "rsi_oversold": 30,
+            "rsi_overbought": 70,
+        }
+
+    def param_descriptions(self) -> dict:
+        return {
+            "rsi_period": "RSI lookback period (shorter = more signals, more noise)",
+            "bb_period": "Bollinger Band SMA period",
+            "bb_std": "Bollinger Band width in standard deviations (wider = fewer signals)",
+            "rsi_oversold": "RSI level to consider oversold (buy zone)",
+            "rsi_overbought": "RSI level to consider overbought (sell zone)",
         }
 
     def required_history(self) -> int:

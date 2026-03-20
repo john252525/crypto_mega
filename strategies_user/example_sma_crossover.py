@@ -12,11 +12,19 @@ from crypto_mega.utils.types import Signal, SignalDirection, StrategyConfig
 
 
 class SMACrossover(BaseStrategy):
-    """
-    Classic SMA crossover strategy.
-    BUY when fast SMA crosses above slow SMA.
-    SELL when fast SMA crosses below slow SMA.
-    """
+    """Classic SMA crossover — the "hello world" of trading strategies."""
+
+    DESCRIPTION = (
+        "Follows the trend using two Simple Moving Averages. "
+        "When the fast SMA crosses above the slow SMA — BUY. "
+        "When it crosses below — SELL. Works best on trending markets "
+        "with clear directional moves (BTC rallies, ETH pumps). "
+        "Avoid during sideways/choppy price action."
+    )
+    CATEGORY = "trend"
+    RISK_LEVEL = "low"
+    BEST_TIMEFRAMES = ["1h", "4h", "1d"]
+    BEST_MARKETS = ["trending"]
 
     def __init__(self, config: StrategyConfig):
         super().__init__(config)
@@ -71,6 +79,15 @@ class SMACrossover(BaseStrategy):
         return {
             "fast_period": [5, 8, 10, 13, 15, 20],
             "slow_period": [20, 30, 40, 50, 60, 100],
+        }
+
+    def param_defaults(self) -> dict:
+        return {"fast_period": 10, "slow_period": 30}
+
+    def param_descriptions(self) -> dict:
+        return {
+            "fast_period": "Fast SMA period (shorter = more reactive, more noise)",
+            "slow_period": "Slow SMA period (longer = smoother, slower entries)",
         }
 
     def required_history(self) -> int:

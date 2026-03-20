@@ -195,18 +195,159 @@ tailwind.config = {
 
   <!-- ═══ STRATEGIES TAB ═══ -->
   <div id="tab-strategies" class="hidden fade-in">
-    <h2 class="text-lg font-semibold text-accent mb-4">Loaded Strategies</h2>
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4" id="strategy-grid">
-      <div class="text-gray-600">Loading...</div>
+
+    <!-- Sub-tabs -->
+    <div class="flex gap-4 mb-4 border-b border-border">
+      <button class="py-2 px-1 text-accent border-b-2 border-accent text-sm" data-stab="loaded" onclick="switchStratTab('loaded')">Loaded Strategies</button>
+      <button class="py-2 px-1 text-gray-500 hover:text-gray-300 text-sm" data-stab="generator" onclick="switchStratTab('generator')">Strategy Generator</button>
+      <button class="py-2 px-1 text-gray-500 hover:text-gray-300 text-sm" data-stab="guide" onclick="switchStratTab('guide')">How-To Guide</button>
     </div>
-    <div class="mt-6 bg-card border border-border rounded-lg p-4">
-      <h3 class="text-blue text-sm font-semibold mb-3">Load Strategies from Directory</h3>
-      <div class="flex gap-2">
-        <input id="load-dir" type="text" value="strategies_user" class="flex-1 bg-bg border border-border rounded px-3 py-2 text-sm">
-        <button onclick="loadDir()" class="px-4 py-2 bg-accent/20 text-accent rounded hover:bg-accent/30 text-sm">Load</button>
+
+    <!-- ─── Loaded Strategies ─── -->
+    <div id="stab-loaded">
+      <div class="grid grid-cols-1 lg:grid-cols-2 gap-4" id="strategy-grid">
+        <div class="text-gray-600">Loading...</div>
       </div>
-      <div id="load-result" class="mt-2 text-xs"></div>
+      <div class="mt-4 bg-card border border-border rounded-lg p-4">
+        <h3 class="text-blue text-sm font-semibold mb-3">Load from Directory</h3>
+        <div class="flex gap-2">
+          <input id="load-dir" type="text" value="strategies_user" class="flex-1 bg-bg border border-border rounded px-3 py-2 text-sm">
+          <button onclick="loadDir()" class="px-4 py-2 bg-accent/20 text-accent rounded hover:bg-accent/30 text-sm">Load</button>
+        </div>
+        <div id="load-result" class="mt-2 text-xs"></div>
+      </div>
     </div>
+
+    <!-- ─── Strategy Generator ─── -->
+    <div id="stab-generator" class="hidden">
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <!-- Template picker -->
+        <div class="bg-card border border-border rounded-lg p-4">
+          <h3 class="text-accent text-sm font-semibold mb-3">1. Pick Template</h3>
+          <div id="template-list" class="space-y-2"></div>
+        </div>
+        <!-- Parameter editor -->
+        <div class="bg-card border border-border rounded-lg p-4">
+          <h3 class="text-accent text-sm font-semibold mb-3">2. Configure</h3>
+          <div id="template-params" class="space-y-3">
+            <div class="text-gray-600 text-xs">Select a template first</div>
+          </div>
+        </div>
+        <!-- Preview + deploy -->
+        <div class="bg-card border border-border rounded-lg p-4">
+          <h3 class="text-accent text-sm font-semibold mb-3">3. Deploy</h3>
+          <div class="space-y-3">
+            <div>
+              <label class="text-xs text-gray-500">Symbols</label>
+              <input id="gen-symbols" type="text" value="BTC/USDT,ETH/USDT" class="w-full bg-bg border border-border rounded px-2 py-1 text-sm mt-1">
+            </div>
+            <div>
+              <label class="text-xs text-gray-500">Priority (0-100)</label>
+              <input id="gen-priority" type="number" value="50" min="0" max="100" class="w-full bg-bg border border-border rounded px-2 py-1 text-sm mt-1">
+            </div>
+            <button onclick="deployStrategy()" class="w-full px-4 py-2 bg-accent/20 text-accent rounded hover:bg-accent/30 text-sm">Deploy Strategy</button>
+            <div id="gen-result" class="text-xs"></div>
+            <hr class="border-border">
+            <h4 class="text-xs text-gray-400 font-semibold">Batch Deploy</h4>
+            <p class="text-xs text-gray-600">Generate multiple strategies at once by iterating parameters.</p>
+            <button onclick="batchDeploy()" class="w-full px-4 py-2 bg-blue/20 text-blue rounded hover:bg-blue/30 text-sm">Batch Deploy (all grid combos)</button>
+            <div id="batch-result" class="text-xs"></div>
+          </div>
+        </div>
+      </div>
+      <div class="mt-4 bg-card border border-border rounded-lg p-4">
+        <h3 class="text-sm font-semibold text-gray-400 mb-2">Code Preview</h3>
+        <pre id="gen-code-preview" class="text-xs text-gray-500 overflow-auto max-h-64 bg-bg p-3 rounded"></pre>
+      </div>
+    </div>
+
+    <!-- ─── Guide ─── -->
+    <div id="stab-guide" class="hidden">
+      <div class="max-w-3xl space-y-6">
+        <div class="bg-card border border-border rounded-lg p-5">
+          <h3 class="text-accent font-semibold mb-3">Quick Start: Create a Strategy in 60 seconds</h3>
+          <ol class="text-sm text-gray-300 space-y-2 list-decimal list-inside">
+            <li>Go to <span class="text-accent">Strategy Generator</span> tab</li>
+            <li>Pick a template (SMA Crossover, RSI, Momentum, Breakout)</li>
+            <li>Tweak parameters on the right panel</li>
+            <li>Click <span class="text-accent">Deploy Strategy</span> to load it instantly</li>
+            <li>Or click <span class="text-blue">Batch Deploy</span> to generate all param grid combinations at once</li>
+          </ol>
+        </div>
+
+        <div class="bg-card border border-border rounded-lg p-5">
+          <h3 class="text-accent font-semibold mb-3">Strategy Categories</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+            <div class="p-3 rounded bg-bg">
+              <div class="text-green-400 font-semibold">Trend Following</div>
+              <div class="text-gray-500 text-xs mt-1">Rides momentum. Great in bull/bear markets. Gets chopped in sideways. Examples: SMA Cross, EMA Momentum.</div>
+            </div>
+            <div class="p-3 rounded bg-bg">
+              <div class="text-purple-400 font-semibold">Mean Reversion</div>
+              <div class="text-gray-500 text-xs mt-1">Catches bounces from extremes. Best in ranging markets. Dangerous in strong trends. Examples: RSI+BB, MACD divergence.</div>
+            </div>
+            <div class="p-3 rounded bg-bg">
+              <div class="text-blue-400 font-semibold">Momentum</div>
+              <div class="text-gray-500 text-xs mt-1">Enters when price + volume accelerate. Needs volume confirmation. Best for catching big moves. Examples: EMA slope + volume.</div>
+            </div>
+            <div class="p-3 rounded bg-bg">
+              <div class="text-orange-400 font-semibold">Breakout</div>
+              <div class="text-gray-500 text-xs mt-1">Trades price breaking out of ranges. Many false signals, but winners are big. Examples: Channel breakout, Donchian.</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-card border border-border rounded-lg p-5">
+          <h3 class="text-accent font-semibold mb-3">Writing Custom Strategies</h3>
+          <div class="text-sm text-gray-300 space-y-2">
+            <p>Create a <code class="text-accent">.py</code> file in <code class="text-accent">strategies_user/</code> folder:</p>
+            <pre class="bg-bg p-3 rounded text-xs overflow-auto text-gray-400">from crypto_mega.strategies.base import BaseStrategy
+from crypto_mega.utils.types import Signal, SignalDirection, StrategyConfig
+
+class MyStrategy(BaseStrategy):
+    DESCRIPTION = "What this strategy does"
+    CATEGORY = "trend"          # trend | mean-reversion | momentum | breakout
+    RISK_LEVEL = "medium"       # low | medium | high
+    BEST_TIMEFRAMES = ["1h"]
+    BEST_MARKETS = ["trending"]
+
+    def __init__(self, config: StrategyConfig):
+        super().__init__(config)
+        self.my_param = config.parameters.get("my_param", 14)
+
+    def generate_signals(self, data: dict[str, pd.DataFrame]) -> list[Signal]:
+        signals = []
+        for key, df in data.items():
+            symbol = key.split("_")[0]
+            # Your logic here...
+            # signals.append(Signal(symbol=symbol, direction=SignalDirection.LONG, ...))
+        return signals
+
+    def param_grid(self):
+        return {"my_param": [7, 14, 21]}
+
+    def param_defaults(self):
+        return {"my_param": 14}
+
+    def param_descriptions(self):
+        return {"my_param": "Lookback period for the indicator"}</pre>
+            <p>Then load it via the <strong>Load from Directory</strong> button or restart the system.</p>
+          </div>
+        </div>
+
+        <div class="bg-card border border-border rounded-lg p-5">
+          <h3 class="text-accent font-semibold mb-3">Pro Tips</h3>
+          <ul class="text-sm text-gray-400 space-y-1 list-disc list-inside">
+            <li><strong>Batch optimization:</strong> Define <code>param_grid()</code> and use Backtest to find best params</li>
+            <li><strong>Multiple timeframes:</strong> Override <code>required_timeframes()</code> for multi-TF confluence</li>
+            <li><strong>Risk management:</strong> Always set <code>stop_loss</code> and <code>take_profit</code> on signals</li>
+            <li><strong>API deploy:</strong> POST to <code>/strategies/load-code</code> with Python code string</li>
+            <li><strong>Combine strategies:</strong> Run trend + reversion together for hedge diversification</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
   </div>
 
   <!-- ═══ LOGS TAB ═══ -->
@@ -489,6 +630,13 @@ async function loadPositions(type) {
 }
 
 // ─── Strategies ───
+const CATEGORY_COLORS = {
+  trend: 'text-green-400', 'mean-reversion': 'text-purple-400',
+  momentum: 'text-blue-400', breakout: 'text-orange-400',
+  scalping: 'text-yellow-400', custom: 'text-gray-400'
+};
+const RISK_COLORS = { low: 'text-profit', medium: 'text-warn', high: 'text-loss' };
+
 async function loadStrategies() {
   const data = await api('/strategies');
   const grid = document.getElementById('strategy-grid');
@@ -497,20 +645,52 @@ async function loadStrategies() {
     return;
   }
   const running = data.running || {};
-  grid.innerHTML = Object.entries(data.registered).map(([name, cls]) => {
+  grid.innerHTML = Object.entries(data.registered).map(([name, info]) => {
     const runInfo = Object.values(running).find(r => r.name === name);
     const statusColor = runInfo ? (runInfo.status === 'running' ? 'text-profit' : 'text-warn') : 'text-gray-600';
     const statusText = runInfo ? runInfo.status : 'idle';
-    return `<div class="bg-card border border-border rounded-lg p-4">
-      <div class="flex justify-between items-start mb-2">
-        <h4 class="font-semibold text-sm">${name}</h4>
-        <span class="${statusColor} text-xs uppercase">${statusText}</span>
+    const cat = info.category || 'custom';
+    const catColor = CATEGORY_COLORS[cat] || 'text-gray-400';
+    const risk = info.risk_level || 'medium';
+    const riskColor = RISK_COLORS[risk] || 'text-gray-400';
+    const desc = info.description || '';
+    const params = info.parameters || {};
+    const paramKeys = Object.keys(params);
+    const tfs = (info.best_timeframes || []).join(', ');
+    const markets = (info.best_markets || []).join(', ');
+    const combos = info.total_grid_combos || 0;
+
+    const paramHtml = paramKeys.length > 0 ? paramKeys.map(k => {
+      const p = params[k];
+      const gridVals = (p.grid || []).join(', ');
+      return `<div class="flex justify-between">
+        <span class="text-gray-400">${k}</span>
+        <span class="text-gray-500">${p.default != null ? p.default : '-'}${p.description ? ` <span title="${p.description}" style="cursor:help">(?)</span>` : ''}</span>
       </div>
-      ${runInfo ? `<div class="text-xs text-gray-500 space-y-1">
-        <div>Signals: ${runInfo.signals}</div>
-        <div>Priority: ${runInfo.priority}</div>
-        <div>Errors: ${runInfo.errors.length}</div>
-      </div>` : '<div class="text-xs text-gray-600">Not running</div>'}
+      ${gridVals ? `<div class="text-gray-600 text-[10px] -mt-1">grid: [${gridVals}]</div>` : ''}`;
+    }).join('') : '<div class="text-gray-600">No configurable params</div>';
+
+    return `<div class="bg-card border border-border rounded-lg p-4">
+      <div class="flex justify-between items-start mb-1">
+        <h4 class="font-semibold text-sm">${name}</h4>
+        <span class="${statusColor} text-xs uppercase font-bold">${statusText}</span>
+      </div>
+      <div class="flex gap-2 mb-2">
+        <span class="${catColor} text-xs border border-current/20 rounded px-1.5 py-0.5">${cat}</span>
+        <span class="${riskColor} text-xs border border-current/20 rounded px-1.5 py-0.5">risk: ${risk}</span>
+        ${tfs ? `<span class="text-gray-500 text-xs">TF: ${tfs}</span>` : ''}
+      </div>
+      <p class="text-xs text-gray-400 mb-3 leading-relaxed">${desc}</p>
+      ${markets ? `<div class="text-xs text-gray-600 mb-2">Best for: ${markets}</div>` : ''}
+      <details class="text-xs">
+        <summary class="cursor-pointer text-gray-500 hover:text-gray-300">Parameters (${paramKeys.length}) ${combos > 1 ? `&mdash; ${combos} grid combos` : ''}</summary>
+        <div class="mt-2 space-y-1 font-mono text-[11px]">${paramHtml}</div>
+      </details>
+      ${runInfo ? `<div class="mt-3 pt-2 border-t border-border text-xs text-gray-500 flex gap-3">
+        <span>Signals: <b class="text-gray-300">${runInfo.signals}</b></span>
+        <span>Priority: <b class="text-gray-300">${runInfo.priority}</b></span>
+        <span>Errors: <b class="${runInfo.errors.length > 0 ? 'text-loss' : 'text-gray-300'}">${runInfo.errors.length}</b></span>
+      </div>` : ''}
     </div>`;
   }).join('');
 }
@@ -521,6 +701,175 @@ async function loadDir() {
   document.getElementById('load-result').innerHTML = data.loaded
     ? `<span class="text-profit">Loaded: ${data.loaded.join(', ')}</span>`
     : `<span class="text-loss">Error: ${JSON.stringify(data)}</span>`;
+  loadStrategies();
+}
+
+// ─── Strategy sub-tabs ───
+let currentStratTab = 'loaded';
+function switchStratTab(tab) {
+  currentStratTab = tab;
+  document.querySelectorAll('[id^="stab-"]').forEach(el => el.classList.add('hidden'));
+  document.getElementById('stab-' + tab).classList.remove('hidden');
+  document.querySelectorAll('[data-stab]').forEach(el => {
+    el.className = el.dataset.stab === tab
+      ? 'py-2 px-1 text-accent border-b-2 border-accent text-sm'
+      : 'py-2 px-1 text-gray-500 hover:text-gray-300 text-sm';
+  });
+  if (tab === 'generator') loadTemplates();
+}
+
+// ─── Strategy Generator ───
+let templates = {};
+let selectedTemplate = null;
+
+async function loadTemplates() {
+  const data = await api('/strategies/templates');
+  templates = data.templates || {};
+  const list = document.getElementById('template-list');
+  list.innerHTML = Object.entries(templates).map(([key, t]) => {
+    const catColor = CATEGORY_COLORS[t.category] || 'text-gray-400';
+    return `<div class="p-3 rounded border border-border cursor-pointer hover:border-accent transition-colors ${selectedTemplate === key ? 'border-accent bg-accent/5' : ''}" onclick="selectTemplate('${key}')">
+      <div class="flex justify-between items-center">
+        <span class="font-semibold text-sm">${t.label}</span>
+        <span class="${catColor} text-xs">${t.category}</span>
+      </div>
+      <p class="text-xs text-gray-500 mt-1">${t.description}</p>
+    </div>`;
+  }).join('');
+}
+
+function selectTemplate(key) {
+  selectedTemplate = key;
+  loadTemplates();
+  const t = templates[key];
+  const container = document.getElementById('template-params');
+  container.innerHTML = Object.entries(t.params).map(([pk, pv]) => {
+    if (pv.type === 'select') {
+      const opts = (pv.options || []).map(o => `<option value="${o}" ${o === pv.default ? 'selected' : ''}>${o}</option>`).join('');
+      return `<div>
+        <label class="text-xs text-gray-500">${pv.label}</label>
+        <select data-param="${pk}" class="w-full bg-bg border border-border rounded px-2 py-1 text-sm mt-1">${opts}</select>
+      </div>`;
+    }
+    return `<div>
+      <label class="text-xs text-gray-500">${pv.label}</label>
+      <input data-param="${pk}" type="${pv.type === 'int' || pv.type === 'float' ? 'number' : 'text'}"
+        value="${pv.default}" step="${pv.type === 'float' ? '0.01' : '1'}"
+        class="w-full bg-bg border border-border rounded px-2 py-1 text-sm mt-1"
+        oninput="updateCodePreview()">
+    </div>`;
+  }).join('');
+  updateCodePreview();
+}
+
+function getTemplateParamValues() {
+  const vals = {};
+  document.querySelectorAll('#template-params [data-param]').forEach(el => {
+    vals[el.dataset.param] = el.value;
+  });
+  return vals;
+}
+
+function renderTemplateCode() {
+  if (!selectedTemplate) return '';
+  const t = templates[selectedTemplate];
+  let code = t.code;
+  const vals = getTemplateParamValues();
+  for (const [k, v] of Object.entries(vals)) {
+    code = code.replaceAll('{' + k + '}', v);
+  }
+  return code;
+}
+
+function updateCodePreview() {
+  document.getElementById('gen-code-preview').textContent = renderTemplateCode();
+}
+
+async function deployStrategy() {
+  if (!selectedTemplate) { alert('Select a template first'); return; }
+  const vals = getTemplateParamValues();
+  const code = renderTemplateCode();
+  const symbols = document.getElementById('gen-symbols').value.split(',').map(s => s.trim());
+  const priority = parseInt(document.getElementById('gen-priority').value) || 50;
+
+  const data = await post('/strategies/load-code', {
+    code: code,
+    name: vals.class_name || 'Generated',
+    description: vals.description || '',
+    symbols: symbols,
+    priority: priority,
+  });
+  document.getElementById('gen-result').innerHTML = data.strategies
+    ? `<span class="text-profit">Deployed: ${data.strategies.map(s => s.name).join(', ')}</span>`
+    : `<span class="text-loss">Error: ${JSON.stringify(data.detail || data)}</span>`;
+  loadStrategies();
+}
+
+async function batchDeploy() {
+  if (!selectedTemplate) { alert('Select a template first'); return; }
+  const t = templates[selectedTemplate];
+  const vals = getTemplateParamValues();
+  const symbols = document.getElementById('gen-symbols').value.split(',').map(s => s.trim());
+  const priority = parseInt(document.getElementById('gen-priority').value) || 50;
+  const baseName = vals.class_name || 'Batch';
+
+  // Find numeric params that have grid values in the template
+  const gridParams = {};
+  for (const [pk, pv] of Object.entries(t.params)) {
+    if (pv.type === 'int' || pv.type === 'float') {
+      gridParams[pk] = pv;
+    }
+  }
+
+  // Generate all combinations of the 2 most impactful numeric params
+  const paramNames = Object.keys(gridParams).slice(0, 2);
+  let combos = [{}];
+  for (const pn of paramNames) {
+    const pv = gridParams[pn];
+    const baseVal = parseFloat(vals[pn]) || pv.default;
+    // Create 3 variations: 0.7x, 1x, 1.5x
+    const variations = [
+      Math.round(baseVal * 0.7 * 100) / 100,
+      baseVal,
+      Math.round(baseVal * 1.5 * 100) / 100,
+    ];
+    const newCombos = [];
+    for (const c of combos) {
+      for (const v of variations) {
+        newCombos.push({...c, [pn]: v});
+      }
+    }
+    combos = newCombos;
+  }
+
+  const results = [];
+  const batchEl = document.getElementById('batch-result');
+  batchEl.innerHTML = `<span class="text-warn">Deploying ${combos.length} strategies...</span>`;
+
+  for (let i = 0; i < combos.length; i++) {
+    const combo = combos[i];
+    const suffix = Object.values(combo).join('_');
+    const overrides = {...vals, ...Object.fromEntries(Object.entries(combo).map(([k, v]) => [k, String(v)]))};
+    overrides.class_name = baseName + '_' + suffix.replace(/\\./g, 'd');
+    let code = t.code;
+    for (const [k, v] of Object.entries(overrides)) {
+      code = code.replaceAll('{' + k + '}', v);
+    }
+    try {
+      const data = await post('/strategies/load-code', {
+        code: code,
+        name: overrides.class_name,
+        description: `${vals.description} [${Object.entries(combo).map(([k,v]) => k+'='+v).join(', ')}]`,
+        symbols: symbols,
+        priority: priority,
+      });
+      if (data.strategies) results.push(...data.strategies.map(s => s.name));
+    } catch (e) {
+      results.push('ERROR: ' + e);
+    }
+  }
+
+  batchEl.innerHTML = `<span class="text-profit">Deployed ${results.length} strategies: ${results.join(', ')}</span>`;
   loadStrategies();
 }
 

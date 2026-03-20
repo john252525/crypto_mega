@@ -345,9 +345,20 @@ async def load_strategies_from_dir(directory: str = "strategies_user"):
 
 @app.get("/strategies")
 async def list_strategies():
-    """List all registered strategies."""
+    """List all registered strategies with full metadata."""
+    from crypto_mega.utils.types import StrategyConfig
+
+    registered = {}
+    for name, cls in strategy_loader.list_all().items():
+        try:
+            dummy_cfg = StrategyConfig(name=name)
+            instance = cls(dummy_cfg)
+            registered[name] = instance.describe()
+        except Exception:
+            registered[name] = {"name": name, "description": "", "category": "custom"}
+
     return {
-        "registered": {name: str(cls) for name, cls in strategy_loader.list_all().items()},
+        "registered": registered,
         "running": signal_engine.get_status(),
     }
 
@@ -369,6 +380,275 @@ async def remove_strategy(strategy_id: str):
     signal_engine.remove_strategy(strategy_id)
     resource_manager.remove_allocation(strategy_id)
     return {"status": "removed"}
+
+
+@app.get("/strategies/templates")
+async def get_strategy_templates():
+    """Return strategy code templates for batch generation."""
+    return {"templates": STRATEGY_TEMPLATES}
+
+
+STRATEGY_TEMPLATES = {
+    "sma_crossover": {
+        "label": "SMA Crossover",
+        "category": "trend",
+        "description": "Two moving averages — buy on golden cross, sell on death cross",
+        "code": '''import pandas as pd
+from crypto_mega.strategies.base import BaseStrategy
+from crypto_mega.utils.types import Signal, SignalDirection, StrategyConfig
+
+class {class_name}(BaseStrategy):
+    """{description}"""
+    DESCRIPTION = "{description}"
+    CATEGORY = "trend"
+    RISK_LEVEL = "{risk_level}"
+    BEST_TIMEFRAMES = {timeframes}
+    BEST_MARKETS = ["trending"]
+
+    def __init__(self, config: StrategyConfig):
+        super().__init__(config)
+        self.fast_period = config.parameters.get("fast_period", {fast_period})
+        self.slow_period = config.parameters.get("slow_period", {slow_period})
+
+    def generate_signals(self, data: dict[str, pd.DataFrame]) -> list[Signal]:
+        signals = []
+        for key, df in data.items():
+            if len(df) < self.slow_period + 2:
+                continue
+            symbol = key.split("_")[0]
+            df = df.copy()
+            df["sma_fast"] = df["close"].rolling(self.fast_period).mean()
+            df["sma_slow"] = df["close"].rolling(self.slow_period).mean()
+            df = df.dropna()
+            if len(df) < 2:
+                continue
+            prev, curr = df.iloc[-2], df.iloc[-1]
+            if prev["sma_fast"] <= prev["sma_slow"] and curr["sma_fast"] > curr["sma_slow"]:
+                signals.append(Signal(symbol=symbol, direction=SignalDirection.LONG,
+                    strength=0.7, price=curr["close"],
+                    stop_loss=curr["close"] * {sl_long}, take_profit=curr["close"] * {tp_long}))
+            elif prev["sma_fast"] >= prev["sma_slow"] and curr["sma_fast"] < curr["sma_slow"]:
+                signals.append(Signal(symbol=symbol, direction=SignalDirection.SHORT,
+                    strength=0.7, price=curr["close"],
+                    stop_loss=curr["close"] * {sl_short}, take_profit=curr["close"] * {tp_short}))
+        return signals
+
+    def param_grid(self):
+        return {{"fast_period": [5, 8, 10, 15, 20], "slow_period": [20, 30, 50, 100]}}
+    def param_defaults(self):
+        return {{"fast_period": {fast_period}, "slow_period": {slow_period}}}
+''',
+        "params": {
+            "class_name": {"default": "SMACross", "label": "Class name"},
+            "description": {"default": "SMA crossover strategy", "label": "Description"},
+            "fast_period": {"default": 10, "label": "Fast SMA period", "type": "int"},
+            "slow_period": {"default": 30, "label": "Slow SMA period", "type": "int"},
+            "sl_long": {"default": 0.98, "label": "Stop-loss % (long)", "type": "float"},
+            "tp_long": {"default": 1.04, "label": "Take-profit % (long)", "type": "float"},
+            "sl_short": {"default": 1.02, "label": "Stop-loss % (short)", "type": "float"},
+            "tp_short": {"default": 0.96, "label": "Take-profit % (short)", "type": "float"},
+            "risk_level": {"default": "low", "label": "Risk level", "type": "select", "options": ["low", "medium", "high"]},
+            "timeframes": {"default": '["1h", "4h"]', "label": "Timeframes", "type": "text"},
+        },
+    },
+    "rsi_reversion": {
+        "label": "RSI Mean-Reversion",
+        "category": "mean-reversion",
+        "description": "Buy oversold RSI, sell overbought RSI with Bollinger Band confirmation",
+        "code": '''import numpy as np
+import pandas as pd
+from crypto_mega.strategies.base import BaseStrategy
+from crypto_mega.utils.types import Signal, SignalDirection, StrategyConfig
+
+class {class_name}(BaseStrategy):
+    """{description}"""
+    DESCRIPTION = "{description}"
+    CATEGORY = "mean-reversion"
+    RISK_LEVEL = "{risk_level}"
+    BEST_TIMEFRAMES = {timeframes}
+    BEST_MARKETS = ["ranging", "sideways"]
+
+    def __init__(self, config: StrategyConfig):
+        super().__init__(config)
+        self.rsi_period = config.parameters.get("rsi_period", {rsi_period})
+        self.rsi_oversold = config.parameters.get("rsi_oversold", {rsi_oversold})
+        self.rsi_overbought = config.parameters.get("rsi_overbought", {rsi_overbought})
+        self.bb_period = config.parameters.get("bb_period", {bb_period})
+        self.bb_std = config.parameters.get("bb_std", {bb_std})
+
+    def generate_signals(self, data: dict[str, pd.DataFrame]) -> list[Signal]:
+        signals = []
+        for key, df in data.items():
+            if len(df) < max(self.rsi_period, self.bb_period) + 5:
+                continue
+            symbol = key.split("_")[0]
+            df = df.copy()
+            delta = df["close"].diff()
+            gain = delta.clip(lower=0).rolling(self.rsi_period).mean()
+            loss = (-delta.clip(upper=0)).rolling(self.rsi_period).mean()
+            rs = gain / loss.replace(0, np.nan)
+            df["rsi"] = 100 - (100 / (1 + rs))
+            df["bb_mid"] = df["close"].rolling(self.bb_period).mean()
+            bb_s = df["close"].rolling(self.bb_period).std()
+            df["bb_upper"] = df["bb_mid"] + self.bb_std * bb_s
+            df["bb_lower"] = df["bb_mid"] - self.bb_std * bb_s
+            df = df.dropna()
+            if len(df) < 1:
+                continue
+            last = df.iloc[-1]
+            if last["rsi"] < self.rsi_oversold and last["close"] <= last["bb_lower"]:
+                signals.append(Signal(symbol=symbol, direction=SignalDirection.LONG,
+                    strength=min(1.0, (self.rsi_oversold - last["rsi"])/30 + 0.5),
+                    price=last["close"], stop_loss=last["close"]*0.97, take_profit=last["bb_mid"]))
+            elif last["rsi"] > self.rsi_overbought and last["close"] >= last["bb_upper"]:
+                signals.append(Signal(symbol=symbol, direction=SignalDirection.SHORT,
+                    strength=min(1.0, (last["rsi"] - self.rsi_overbought)/30 + 0.5),
+                    price=last["close"], stop_loss=last["close"]*1.03, take_profit=last["bb_mid"]))
+        return signals
+
+    def param_grid(self):
+        return {{"rsi_period": [7, 14, 21], "bb_period": [15, 20, 25], "bb_std": [1.5, 2.0, 2.5]}}
+    def param_defaults(self):
+        return {{"rsi_period": {rsi_period}, "bb_period": {bb_period}, "bb_std": {bb_std}}}
+''',
+        "params": {
+            "class_name": {"default": "RSIMeanRev", "label": "Class name"},
+            "description": {"default": "RSI + Bollinger mean-reversion", "label": "Description"},
+            "rsi_period": {"default": 14, "label": "RSI period", "type": "int"},
+            "rsi_oversold": {"default": 30, "label": "RSI oversold", "type": "int"},
+            "rsi_overbought": {"default": 70, "label": "RSI overbought", "type": "int"},
+            "bb_period": {"default": 20, "label": "BB period", "type": "int"},
+            "bb_std": {"default": 2.0, "label": "BB std dev", "type": "float"},
+            "risk_level": {"default": "medium", "label": "Risk level", "type": "select", "options": ["low", "medium", "high"]},
+            "timeframes": {"default": '["15m", "1h"]', "label": "Timeframes", "type": "text"},
+        },
+    },
+    "ema_momentum": {
+        "label": "EMA Momentum",
+        "category": "momentum",
+        "description": "EMA slope + volume spike = momentum entry",
+        "code": '''import pandas as pd
+from crypto_mega.strategies.base import BaseStrategy
+from crypto_mega.utils.types import Signal, SignalDirection, StrategyConfig
+
+class {class_name}(BaseStrategy):
+    """{description}"""
+    DESCRIPTION = "{description}"
+    CATEGORY = "momentum"
+    RISK_LEVEL = "{risk_level}"
+    BEST_TIMEFRAMES = {timeframes}
+    BEST_MARKETS = ["trending", "volatile"]
+
+    def __init__(self, config: StrategyConfig):
+        super().__init__(config)
+        self.ema_period = config.parameters.get("ema_period", {ema_period})
+        self.slope_bars = config.parameters.get("slope_bars", {slope_bars})
+        self.vol_mult = config.parameters.get("vol_mult", {vol_mult})
+
+    def generate_signals(self, data: dict[str, pd.DataFrame]) -> list[Signal]:
+        signals = []
+        for key, df in data.items():
+            if len(df) < self.ema_period + self.slope_bars + 5:
+                continue
+            symbol = key.split("_")[0]
+            df = df.copy()
+            df["ema"] = df["close"].ewm(span=self.ema_period).mean()
+            slope = df["ema"].iloc[-1] - df["ema"].iloc[-self.slope_bars]
+            avg_vol = df["volume"].rolling(20).mean().iloc[-1]
+            curr_vol = df["volume"].iloc[-1]
+            if curr_vol < avg_vol * self.vol_mult:
+                continue
+            price = df["close"].iloc[-1]
+            strength = min(1.0, abs(slope) / price * 100)
+            if slope > 0:
+                signals.append(Signal(symbol=symbol, direction=SignalDirection.LONG,
+                    strength=strength, price=price,
+                    stop_loss=price * {sl_long}, take_profit=price * {tp_long}))
+            elif slope < 0:
+                signals.append(Signal(symbol=symbol, direction=SignalDirection.SHORT,
+                    strength=strength, price=price,
+                    stop_loss=price * {sl_short}, take_profit=price * {tp_short}))
+        return signals
+
+    def param_grid(self):
+        return {{"ema_period": [10, 15, 20, 30], "slope_bars": [2, 3, 5], "vol_mult": [1.2, 1.5, 2.0]}}
+    def param_defaults(self):
+        return {{"ema_period": {ema_period}, "slope_bars": {slope_bars}, "vol_mult": {vol_mult}}}
+''',
+        "params": {
+            "class_name": {"default": "EMAMomentum", "label": "Class name"},
+            "description": {"default": "EMA momentum with volume confirmation", "label": "Description"},
+            "ema_period": {"default": 20, "label": "EMA period", "type": "int"},
+            "slope_bars": {"default": 3, "label": "Slope lookback bars", "type": "int"},
+            "vol_mult": {"default": 1.5, "label": "Volume multiplier", "type": "float"},
+            "sl_long": {"default": 0.97, "label": "Stop-loss (long)", "type": "float"},
+            "tp_long": {"default": 1.06, "label": "Take-profit (long)", "type": "float"},
+            "sl_short": {"default": 1.03, "label": "Stop-loss (short)", "type": "float"},
+            "tp_short": {"default": 0.94, "label": "Take-profit (short)", "type": "float"},
+            "risk_level": {"default": "medium", "label": "Risk level", "type": "select", "options": ["low", "medium", "high"]},
+            "timeframes": {"default": '["1h", "4h"]', "label": "Timeframes", "type": "text"},
+        },
+    },
+    "breakout": {
+        "label": "Channel Breakout",
+        "category": "breakout",
+        "description": "Enters on price breaking N-bar high/low channel with volume",
+        "code": '''import pandas as pd
+from crypto_mega.strategies.base import BaseStrategy
+from crypto_mega.utils.types import Signal, SignalDirection, StrategyConfig
+
+class {class_name}(BaseStrategy):
+    """{description}"""
+    DESCRIPTION = "{description}"
+    CATEGORY = "breakout"
+    RISK_LEVEL = "{risk_level}"
+    BEST_TIMEFRAMES = {timeframes}
+    BEST_MARKETS = ["consolidating", "volatile"]
+
+    def __init__(self, config: StrategyConfig):
+        super().__init__(config)
+        self.lookback = config.parameters.get("lookback", {lookback})
+        self.vol_mult = config.parameters.get("vol_mult", {vol_mult})
+
+    def generate_signals(self, data: dict[str, pd.DataFrame]) -> list[Signal]:
+        signals = []
+        for key, df in data.items():
+            if len(df) < self.lookback + 5:
+                continue
+            symbol = key.split("_")[0]
+            df = df.copy()
+            window = df.iloc[-(self.lookback+1):-1]
+            ch_high = window["high"].max()
+            ch_low = window["low"].min()
+            last = df.iloc[-1]
+            avg_vol = df["volume"].rolling(20).mean().iloc[-1]
+            if last["volume"] < avg_vol * self.vol_mult:
+                continue
+            if last["close"] > ch_high:
+                signals.append(Signal(symbol=symbol, direction=SignalDirection.LONG,
+                    strength=0.8, price=last["close"],
+                    stop_loss=ch_low, take_profit=last["close"] + (ch_high - ch_low)))
+            elif last["close"] < ch_low:
+                signals.append(Signal(symbol=symbol, direction=SignalDirection.SHORT,
+                    strength=0.8, price=last["close"],
+                    stop_loss=ch_high, take_profit=last["close"] - (ch_high - ch_low)))
+        return signals
+
+    def param_grid(self):
+        return {{"lookback": [10, 20, 30, 50], "vol_mult": [1.2, 1.5, 2.0]}}
+    def param_defaults(self):
+        return {{"lookback": {lookback}, "vol_mult": {vol_mult}}}
+''',
+        "params": {
+            "class_name": {"default": "ChannelBreak", "label": "Class name"},
+            "description": {"default": "Channel breakout with volume confirmation", "label": "Description"},
+            "lookback": {"default": 20, "label": "Channel lookback bars", "type": "int"},
+            "vol_mult": {"default": 1.5, "label": "Volume multiplier", "type": "float"},
+            "risk_level": {"default": "high", "label": "Risk level", "type": "select", "options": ["low", "medium", "high"]},
+            "timeframes": {"default": '["1h", "4h"]', "label": "Timeframes", "type": "text"},
+        },
+    },
+}
 
 
 # ─── Resource management endpoints ───

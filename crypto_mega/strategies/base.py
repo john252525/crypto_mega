@@ -21,6 +21,13 @@ class BaseStrategy(abc.ABC):
     4. Drop the .py file into strategies_user/ or register via API
     """
 
+    # ── Override these in subclasses for rich UI display ──
+    DESCRIPTION: str = ""          # Human-readable description of the strategy
+    CATEGORY: str = "custom"       # trend | mean-reversion | momentum | breakout | scalping | custom
+    RISK_LEVEL: str = "medium"     # low | medium | high
+    BEST_TIMEFRAMES: list[str] = []  # e.g. ["1h", "4h"]
+    BEST_MARKETS: list[str] = []     # e.g. ["trending", "ranging"]
+
     def __init__(self, config: StrategyConfig):
         self.config = config
         self.id = config.id
@@ -44,15 +51,43 @@ class BaseStrategy(abc.ABC):
         """
         Return parameter grid for optimization / grid search.
         Keys are parameter names, values are lists of values to try.
-
-        Example:
-            return {
-                "fast_period": [5, 10, 15, 20],
-                "slow_period": [20, 30, 50, 100],
-                "rsi_threshold": [30, 35, 40],
-            }
         """
         return {}
+
+    def param_defaults(self) -> dict[str, Any]:
+        """Return default values for all configurable parameters."""
+        return {}
+
+    def param_descriptions(self) -> dict[str, str]:
+        """Return human-readable descriptions for each parameter."""
+        return {}
+
+    def describe(self) -> dict[str, Any]:
+        """Return full strategy metadata for the UI."""
+        grid = self.param_grid()
+        total_combos = 1
+        for vals in grid.values():
+            total_combos *= len(vals)
+
+        return {
+            "name": self.__class__.__name__,
+            "description": self.DESCRIPTION or self.__doc__ or "",
+            "category": self.CATEGORY,
+            "risk_level": self.RISK_LEVEL,
+            "best_timeframes": self.BEST_TIMEFRAMES,
+            "best_markets": self.BEST_MARKETS,
+            "parameters": {
+                k: {
+                    "default": self.param_defaults().get(k),
+                    "description": self.param_descriptions().get(k, ""),
+                    "grid": v,
+                }
+                for k, v in grid.items()
+            },
+            "total_grid_combos": total_combos,
+            "required_history": self.required_history(),
+            "required_timeframes": [tf.value for tf in self.required_timeframes()],
+        }
 
     def required_timeframes(self) -> list[TimeFrame]:
         return self.config.timeframes

@@ -12,11 +12,18 @@ from crypto_mega.utils.types import Signal, SignalDirection, StrategyConfig, Tim
 
 
 class MultiTFMomentum(BaseStrategy):
-    """
-    Multi-timeframe momentum confluence.
-    All configured timeframes must agree on direction.
-    Uses EMA slope + volume confirmation.
-    """
+    """Multi-timeframe momentum confluence with volume confirmation."""
+
+    DESCRIPTION = (
+        "High-conviction trend strategy. Checks EMA slope on 3 timeframes "
+        "(15m, 1h, 4h) — only enters when ALL agree on direction AND volume "
+        "is above average. Fewer signals, but each one has strong confluence. "
+        "Best for catching big moves. Misses quick reversals."
+    )
+    CATEGORY = "momentum"
+    RISK_LEVEL = "medium"
+    BEST_TIMEFRAMES = ["15m", "1h", "4h"]
+    BEST_MARKETS = ["trending", "volatile"]
 
     def __init__(self, config: StrategyConfig):
         super().__init__(config)
@@ -99,4 +106,18 @@ class MultiTFMomentum(BaseStrategy):
             "ema_period": [10, 15, 20, 30],
             "slope_lookback": [2, 3, 5],
             "volume_multiplier": [1.2, 1.5, 2.0],
+        }
+
+    def param_defaults(self) -> dict:
+        return {
+            "ema_period": 20,
+            "slope_lookback": 3,
+            "volume_multiplier": 1.5,
+        }
+
+    def param_descriptions(self) -> dict:
+        return {
+            "ema_period": "EMA period for trend detection on each timeframe",
+            "slope_lookback": "How many bars back to measure EMA slope direction",
+            "volume_multiplier": "Volume must be Nx above average to confirm signal",
         }
