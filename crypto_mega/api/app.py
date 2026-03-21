@@ -1681,7 +1681,10 @@ async def dashboard_ui():
     """Full web dashboard UI."""
     from fastapi.responses import HTMLResponse
     from crypto_mega.api.ui import DASHBOARD_HTML
-    return HTMLResponse(content=DASHBOARD_HTML)
+    return HTMLResponse(
+        content=DASHBOARD_HTML,
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 # ─── System endpoints ───
