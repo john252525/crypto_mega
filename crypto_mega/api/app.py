@@ -1313,33 +1313,51 @@ async def connect_exchange(req: ExchangeConnectRequest):
 
 @app.get("/exchange/symbols")
 async def exchange_symbols(exchange: str = ""):
-    """Get all USDT trading pairs directly from exchange.
+    """Get all trading pairs from an exchange, grouped by quote currency.
 
-    If exchange data provider is connected, use it.
-    Otherwise try to connect temporarily.
+    Always respects the `exchange` param — connects temporarily if needed.
+    Returns symbols grouped by quote (USDT, BTC, ETH, etc.) with counts.
     """
-    # 1. Try existing data_provider connection
-    if data_provider._exchange is not None:
+    ex_id = exchange or os.getenv("EXCHANGE_ID", "binance")
+
+    # If requested exchange matches current data_provider, reuse it
+    if (
+        data_provider._exchange is not None
+        and (data_provider._exchange_id or "").lower() == ex_id.lower()
+    ):
         try:
             all_symbols = await data_provider.get_available_symbols()
-            # Filter to USDT pairs and sort
-            usdt = sorted([s for s in all_symbols if s.endswith("/USDT")])
-            exchange_name = data_provider._exchange_id or "unknown"
-            return {"exchange": exchange_name, "symbols": usdt, "total": len(usdt)}
+            return _group_symbols(all_symbols, data_provider._exchange_id or ex_id)
         except Exception as e:
-            logger.warning(f"Failed to fetch symbols from connected exchange: {e}")
+            logger.warning(f"Failed to fetch symbols from {ex_id}: {e}")
 
-    # 2. Try connecting temporarily
-    ex_id = exchange or os.getenv("EXCHANGE_ID", "binance")
+    # Otherwise connect temporarily to the requested exchange
     try:
         temp = DataProvider()
         await temp.init_exchange(ex_id, {"enableRateLimit": True})
         all_symbols = await temp.get_available_symbols()
-        usdt = sorted([s for s in all_symbols if s.endswith("/USDT")])
         await temp.close()
-        return {"exchange": ex_id, "symbols": usdt, "total": len(usdt)}
+        return _group_symbols(all_symbols, ex_id)
     except Exception as e:
         raise HTTPException(503, f"Cannot fetch symbols from {ex_id}: {e}")
+
+
+def _group_symbols(all_symbols: list[str], exchange_name: str) -> dict:
+    """Group symbols by quote currency (USDT, BTC, ETH, etc.)."""
+    by_quote: dict[str, list[str]] = {}
+    for s in sorted(all_symbols):
+        if "/" not in s:
+            continue
+        _, quote = s.split("/", 1)
+        by_quote.setdefault(quote, []).append(s)
+    # Sort groups by count (most popular first)
+    sorted_groups = dict(sorted(by_quote.items(), key=lambda x: -len(x[1])))
+    return {
+        "exchange": exchange_name,
+        "by_quote": sorted_groups,
+        "quotes": list(sorted_groups.keys()),
+        "total": sum(len(v) for v in sorted_groups.values()),
+    }
 
 
 # ─── Logs ───

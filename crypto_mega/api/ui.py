@@ -1729,70 +1729,111 @@ async function runGapCheck() {
 }
 
 // ─── Symbol Picker ───
-// Reusable multi-select symbol picker with text fallback.
+// Reusable multi-select symbol picker with exchange selector, quote currency
+// filter tabs, and text fallback input.
 
-const _symbolPickers = {};  // id -> { selected: Set, allSymbols: {exchange: [syms]} }
+const _symbolPickers = {};
+
+const EXCHANGES = ['binance','bybit','okx','kucoin','gate'];
+
+const TOP_BASES = [
+  'BTC','ETH','BNB','SOL','XRP','DOGE','ADA','AVAX','DOT','LINK',
+  'MATIC','UNI','SHIB','LTC','ATOM','FIL','APT','ARB','OP','NEAR',
+];
 
 function createSymbolPicker(containerId, defaultSymbols = 'BTC/USDT,ETH/USDT') {
   const container = document.getElementById(containerId);
   if (!container) return;
-
-  const pickerId = containerId;
-  _symbolPickers[pickerId] = {
+  const id = containerId;
+  _symbolPickers[id] = {
     selected: new Set(defaultSymbols.split(',').map(s => s.trim()).filter(Boolean)),
-    allSymbols: {},
+    byQuote: {},          // { USDT: [...], BTC: [...], ... }
+    quotes: [],           // ['USDT','BTC','ETH',...]
+    activeQuote: 'USDT',  // current filter tab
+    exchange: '',         // loaded exchange name
     filter: '',
+    total: 0,
   };
 
+  const exOpts = EXCHANGES.map(e => `<option value="${e}">${e[0].toUpperCase()+e.slice(1)}</option>`).join('');
+
   container.innerHTML = `
-    <input type="text" id="${pickerId}-text" value="${defaultSymbols}"
+    <input type="text" id="${id}-text" value="${defaultSymbols}"
       class="w-full bg-bg border border-border rounded px-2 py-1.5 text-sm mb-2"
-      placeholder="BTC/USDT, ETH/USDT, ..."
-      oninput="_onSymTextInput('${pickerId}')">
+      placeholder="BTC/USDT, ETH/USDT, SOL/BTC, ..."
+      oninput="_onSymTextInput('${id}')">
     <div class="sym-picker-actions mb-1">
-      <button class="sym-picker-btn" onclick="_loadExchangeSymbols('${pickerId}')">Load from exchange</button>
-      <button class="sym-picker-btn" onclick="_symSelectAll('${pickerId}')">Select all</button>
-      <button class="sym-picker-btn" onclick="_symSelectNone('${pickerId}')">Clear</button>
-      <button class="sym-picker-btn" onclick="_symSelectTop('${pickerId}')">Top 20</button>
-      <input type="text" class="sym-search" id="${pickerId}-search" placeholder="Filter..."
-        oninput="_symFilter('${pickerId}')">
-      <span class="text-xs text-gray-500" id="${pickerId}-count">${_symbolPickers[pickerId].selected.size} selected</span>
+      <select id="${id}-exchange" class="sym-search" style="width:auto">
+        ${exOpts}
+      </select>
+      <button class="sym-picker-btn" onclick="_loadExchangeSymbols('${id}')">Load</button>
+      <span class="text-gray-700">|</span>
+      <button class="sym-picker-btn" onclick="_symSelectAll('${id}')">Select visible</button>
+      <button class="sym-picker-btn" onclick="_symSelectNone('${id}')">Clear</button>
+      <button class="sym-picker-btn" onclick="_symSelectTop('${id}')">Top 20</button>
+      <input type="text" class="sym-search" id="${id}-search" placeholder="Search..."
+        oninput="_symFilter('${id}')">
+      <span class="text-xs text-gray-500" id="${id}-count">${_symbolPickers[id].selected.size} selected</span>
     </div>
-    <div class="sym-grid" id="${pickerId}-grid"></div>
+    <div id="${id}-quote-tabs" class="flex gap-1 mb-1 flex-wrap"></div>
+    <div class="sym-grid" id="${id}-grid"></div>
   `;
 
-  _renderSymChips(pickerId);
+  _renderQuoteTabs(id);
+  _renderSymChips(id);
 }
 
-// Top symbols by market cap for quick selection
-const TOP_SYMBOLS = [
-  'BTC/USDT','ETH/USDT','BNB/USDT','SOL/USDT','XRP/USDT',
-  'DOGE/USDT','ADA/USDT','AVAX/USDT','DOT/USDT','LINK/USDT',
-  'MATIC/USDT','UNI/USDT','SHIB/USDT','LTC/USDT','ATOM/USDT',
-  'FIL/USDT','APT/USDT','ARB/USDT','OP/USDT','NEAR/USDT',
-];
+function _renderQuoteTabs(pickerId) {
+  const state = _symbolPickers[pickerId];
+  const tabsEl = document.getElementById(pickerId + '-quote-tabs');
+  if (!tabsEl) return;
+  const quotes = state.quotes;
+  if (quotes.length === 0) { tabsEl.innerHTML = ''; return; }
+
+  tabsEl.innerHTML = quotes.map(q => {
+    const count = (state.byQuote[q] || []).length;
+    const active = q === state.activeQuote;
+    const cls = active
+      ? 'sym-picker-btn' + ' !border-accent !text-accent'
+      : 'sym-picker-btn';
+    return `<button class="${cls}" onclick="_symSetQuote('${pickerId}','${q}')">${q} <span class="text-gray-600">(${count})</span></button>`;
+  }).join('');
+}
+
+function _symSetQuote(pickerId, quote) {
+  _symbolPickers[pickerId].activeQuote = quote;
+  _renderQuoteTabs(pickerId);
+  _renderSymChips(pickerId);
+}
 
 function _renderSymChips(pickerId) {
   const state = _symbolPickers[pickerId];
   const grid = document.getElementById(pickerId + '-grid');
   if (!grid) return;
 
-  // Merge: exchange symbols + currently selected (so manual entries show too)
-  const allExchange = Object.values(state.allSymbols).flat();
-  const allSet = new Set([...allExchange, ...state.selected]);
-  let syms = [...allSet].sort();
+  // Source symbols: from active quote tab, or all selected if nothing loaded
+  let pool = [];
+  if (state.quotes.length > 0) {
+    pool = state.byQuote[state.activeQuote] || [];
+  }
+  // Always include currently selected symbols that match active quote
+  const merged = new Set([...pool, ...[...state.selected].filter(s => {
+    if (state.quotes.length === 0) return true;
+    const q = s.includes('/') ? s.split('/')[1] : '';
+    return q === state.activeQuote || state.quotes.length === 0;
+  })]);
+  let syms = [...merged].sort();
 
-  // Apply search filter
+  // Apply text filter
   const filter = (state.filter || '').toUpperCase();
   if (filter) {
     syms = syms.filter(s => s.toUpperCase().includes(filter));
   }
 
-  if (syms.length === 0 && !filter) {
-    // No exchange symbols loaded — show selected as chips + hint
+  if (syms.length === 0 && !filter && state.quotes.length === 0) {
     const selected = [...state.selected].sort();
     if (selected.length === 0) {
-      grid.innerHTML = '<div class="text-gray-600 text-xs py-2">Type symbols above or click "Load from exchange"</div>';
+      grid.innerHTML = '<div class="text-gray-600 text-xs py-2">Type symbols above or select exchange and click "Load"</div>';
       return;
     }
     syms = selected;
@@ -1805,7 +1846,10 @@ function _renderSymChips(pickerId) {
 
   grid.innerHTML = syms.map(s => {
     const sel = state.selected.has(s) ? 'selected' : '';
-    return `<span class="sym-chip ${sel}" onclick="_symToggle('${pickerId}','${s}')">${s.replace('/USDT','')}</span>`;
+    // Show short label: base currency for standard pairs
+    const parts = s.split('/');
+    const label = parts.length === 2 ? parts[0] : s;
+    return `<span class="sym-chip ${sel}" onclick="_symToggle('${pickerId}','${s}')" title="${s}">${label}</span>`;
   }).join('');
 }
 
@@ -1822,9 +1866,14 @@ function _syncSymPicker(pickerId) {
   const countEl = document.getElementById(pickerId + '-count');
   if (textInput) textInput.value = [...state.selected].join(', ');
   if (countEl) {
-    const total = Object.values(state.allSymbols).flat().length;
-    countEl.textContent = total > 0
-      ? `${state.selected.size} selected / ${total} available`
+    const visibleQuote = state.activeQuote;
+    const visibleCount = (state.byQuote[visibleQuote] || []).length;
+    const selInQuote = [...state.selected].filter(s => {
+      if (!s.includes('/')) return false;
+      return s.split('/')[1] === visibleQuote;
+    }).length;
+    countEl.textContent = state.total > 0
+      ? `${state.selected.size} selected (${selInQuote} ${visibleQuote}) / ${state.total} total`
       : `${state.selected.size} selected`;
   }
   _renderSymChips(pickerId);
@@ -1832,97 +1881,91 @@ function _syncSymPicker(pickerId) {
 
 function _onSymTextInput(pickerId) {
   const state = _symbolPickers[pickerId];
-  const textInput = document.getElementById(pickerId + '-text');
-  const raw = textInput.value;
+  const raw = document.getElementById(pickerId + '-text').value;
   const syms = raw.split(/[,;\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
-  // Normalize: if someone types "BTC" without "/USDT", append it
   const normalized = syms.map(s => s.includes('/') ? s : s + '/USDT');
   state.selected = new Set(normalized);
-  const countEl = document.getElementById(pickerId + '-count');
-  if (countEl) countEl.textContent = state.selected.size + ' selected';
-  _renderSymChips(pickerId);
+  _syncSymPicker(pickerId);
 }
 
 async function _loadExchangeSymbols(pickerId) {
   const state = _symbolPickers[pickerId];
   const grid = document.getElementById(pickerId + '-grid');
   const countEl = document.getElementById(pickerId + '-count');
-  grid.innerHTML = '<div class="text-warn text-xs py-2 pulse">Connecting to exchange and loading all symbols...</div>';
+  const exSelect = document.getElementById(pickerId + '-exchange');
+  const exchange = exSelect ? exSelect.value : '';
+  grid.innerHTML = '<div class="text-warn text-xs py-2 pulse">Connecting to ' + (exchange || 'exchange') + '...</div>';
 
-  // 1. Try direct exchange endpoint (fastest, no explorer needed)
-  let data = await api('/exchange/symbols');
-  if (data.symbols && data.symbols.length > 0) {
-    state.allSymbols = { [data.exchange || 'exchange']: data.symbols };
-    if (countEl) countEl.textContent = `${state.selected.size} selected / ${data.symbols.length} available`;
-    _renderSymChips(pickerId);
-    return;
-  }
+  const data = await api(`/exchange/symbols?exchange=${encodeURIComponent(exchange)}`);
 
-  // 2. Fallback: try explore endpoint
-  data = await api('/explore/symbols');
-  if (!data.symbols || Object.keys(data.symbols).length === 0) {
-    data = await api('/explore/refresh-symbols', { method: 'POST' });
-    data = await api('/explore/symbols');
-  }
-
-  if (data.symbols && Object.keys(data.symbols).length > 0) {
-    state.allSymbols = data.symbols;
-    const total = Object.values(data.symbols).flat().length;
-    if (countEl) countEl.textContent = `${state.selected.size} selected / ${total} available`;
+  if (data.by_quote && Object.keys(data.by_quote).length > 0) {
+    state.byQuote = data.by_quote;
+    state.quotes = data.quotes || Object.keys(data.by_quote);
+    state.exchange = data.exchange || exchange;
+    state.total = data.total || 0;
+    // Default to USDT tab if available, else first
+    state.activeQuote = state.quotes.includes('USDT') ? 'USDT' : state.quotes[0];
   } else {
-    // Last resort fallback
-    state.allSymbols = { 'default': TOP_SYMBOLS };
-    if (countEl) countEl.textContent = `${state.selected.size} selected / ${TOP_SYMBOLS.length} (offline list)`;
+    // Fallback
+    const fallback = TOP_BASES.map(b => b + '/USDT');
+    state.byQuote = { 'USDT': fallback };
+    state.quotes = ['USDT'];
+    state.total = fallback.length;
+    state.activeQuote = 'USDT';
   }
 
+  if (countEl) countEl.textContent = `${state.selected.size} selected / ${state.total} total on ${state.exchange}`;
+  _renderQuoteTabs(pickerId);
   _renderSymChips(pickerId);
 }
 
 function _symSelectAll(pickerId) {
   const state = _symbolPickers[pickerId];
-  const allExchange = Object.values(state.allSymbols).flat();
-  if (allExchange.length > 0) {
-    // Apply filter if set
-    const filter = (state.filter || '').toUpperCase();
-    const filtered = filter ? allExchange.filter(s => s.toUpperCase().includes(filter)) : allExchange;
-    filtered.forEach(s => state.selected.add(s));
-  }
+  // Select all visible (current quote tab + filter)
+  const pool = state.byQuote[state.activeQuote] || [];
+  const filter = (state.filter || '').toUpperCase();
+  const filtered = filter ? pool.filter(s => s.toUpperCase().includes(filter)) : pool;
+  filtered.forEach(s => state.selected.add(s));
   _syncSymPicker(pickerId);
 }
 
 function _symSelectNone(pickerId) {
-  const state = _symbolPickers[pickerId];
-  state.selected.clear();
+  _symbolPickers[pickerId].selected.clear();
   _syncSymPicker(pickerId);
 }
 
 function _symSelectTop(pickerId) {
   const state = _symbolPickers[pickerId];
-  const allExchange = Object.values(state.allSymbols).flat();
-  // If exchange symbols loaded, pick first 20; otherwise use our hardcoded top 20
-  const pool = allExchange.length > 0 ? allExchange : TOP_SYMBOLS;
-  state.selected = new Set(pool.slice(0, 20));
+  // Pick top 20 by market cap from current quote tab
+  const pool = state.byQuote[state.activeQuote] || [];
+  const top = pool.length > 0
+    ? TOP_BASES.map(b => b + '/' + state.activeQuote).filter(s => pool.includes(s)).slice(0, 20)
+    : TOP_BASES.map(b => b + '/USDT');
+  // If fewer than 20 found, fill from pool
+  if (top.length < 20) {
+    for (const s of pool) {
+      if (top.length >= 20) break;
+      if (!top.includes(s)) top.push(s);
+    }
+  }
+  state.selected = new Set(top);
   _syncSymPicker(pickerId);
 }
 
 function _symFilter(pickerId) {
-  const state = _symbolPickers[pickerId];
-  state.filter = document.getElementById(pickerId + '-search').value;
+  _symbolPickers[pickerId].filter = document.getElementById(pickerId + '-search').value;
   _renderSymChips(pickerId);
 }
 
-// Helper: get selected symbols as comma string (for API calls)
 function getPickerSymbols(pickerId) {
   const state = _symbolPickers[pickerId];
   if (!state) {
-    // Fallback: try reading text input directly
     const el = document.getElementById(pickerId + '-text');
     return el ? el.value : 'BTC/USDT,ETH/USDT';
   }
   return [...state.selected].join(',');
 }
 
-// Helper: get selected symbols as array
 function getPickerSymbolsArray(pickerId) {
   return getPickerSymbols(pickerId).split(',').map(s => s.trim()).filter(Boolean);
 }
