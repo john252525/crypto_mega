@@ -8,7 +8,9 @@ import signal
 import sys
 
 from crypto_mega.config.settings import SystemConfig
+from crypto_mega.data.models import init_db
 from crypto_mega.data.provider import DataProvider
+from crypto_mega.data.store import CandleStore
 from crypto_mega.engine.signal_engine import SignalEngine
 from crypto_mega.execution.executor import ExecutionEngine, ExchangeConnection
 from crypto_mega.monitor.monitor import PerformanceMonitor
@@ -44,7 +46,8 @@ class Orchestrator:
 
         # Initialize components
         self.data_provider = DataProvider()
-        self.signal_engine = SignalEngine(self.data_provider)
+        self.candle_store: CandleStore | None = None
+        self.signal_engine = SignalEngine(self.data_provider)  # candle_store injected on start
         self.execution_engine = ExecutionEngine()
         self.resource_manager = ResourceManager(
             total_workers=self.config.resources.max_workers,
@@ -93,7 +96,16 @@ class Orchestrator:
 
     async def start(self, interval: float = 60.0):
         """Start the main loop."""
-        # Init exchange connection
+        # Init DB and CandleStore — strategies read from DB if available
+        try:
+            session_factory = await init_db(self.config.db.url)
+            self.candle_store = CandleStore(session_factory)
+            self.signal_engine.candle_store = self.candle_store
+            logger.info("CandleStore initialized — strategies will read from DB")
+        except Exception as e:
+            logger.warning(f"DB not available ({e}), falling back to direct exchange calls")
+
+        # Init exchange connection (still needed as fallback + for execution)
         await self.data_provider.init_exchange("binance", {"enableRateLimit": True})
 
         logger.info(f"Orchestrator starting — {len(self.signal_engine._instances)} strategies, interval={interval}s")

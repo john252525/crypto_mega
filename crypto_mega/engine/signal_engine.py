@@ -8,6 +8,7 @@ import time
 from dataclasses import dataclass, field
 
 from crypto_mega.data.provider import DataProvider
+from crypto_mega.data.store import CandleStore
 from crypto_mega.strategies.base import BaseStrategy
 from crypto_mega.utils.types import Signal, StrategyConfig, StrategyStatus
 
@@ -37,8 +38,9 @@ class SignalEngine:
     - Respects resource allocation priorities
     """
 
-    def __init__(self, data_provider: DataProvider):
+    def __init__(self, data_provider: DataProvider, candle_store: CandleStore | None = None):
         self.data_provider = data_provider
+        self.candle_store = candle_store  # if set, strategies read from DB
         self._instances: dict[str, StrategyInstance] = {}
         self._signal_handlers: list[callable] = []
         self._running = False
@@ -77,9 +79,10 @@ class SignalEngine:
 
         config = instance.config
         try:
-            # Fetch required data
+            # Fetch required data — from DB if CandleStore is available, else from exchange
             timeframe_strs = [tf.value for tf in config.timeframes]
-            data = await self.data_provider.fetch_multi(
+            source = self.candle_store or self.data_provider
+            data = await source.fetch_multi(
                 config.symbols, timeframe_strs, limit=instance.strategy.required_history()
             )
 

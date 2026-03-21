@@ -62,12 +62,31 @@ class RiskConfig:
 
 
 @dataclass
+class CollectorConfig:
+    # Which symbols to collect
+    symbols: list[str] = field(
+        default_factory=lambda: [s.strip() for s in os.getenv("COLLECTOR_SYMBOLS", "BTC/USDT,ETH/USDT").split(",")]
+    )
+    # Which timeframes to collect (configurable on the fly)
+    timeframes: list[str] = field(
+        default_factory=lambda: [t.strip() for t in os.getenv("COLLECTOR_TIMEFRAMES", "1m,5m,15m,1h,4h,1d").split(",")]
+    )
+    # How often to fetch new candles (seconds)
+    interval_sec: float = float(os.getenv("COLLECTOR_INTERVAL", "10"))
+    # How many candles to fetch per request
+    candle_limit: int = int(os.getenv("COLLECTOR_CANDLE_LIMIT", "500"))
+    # How long to keep candles (days)
+    retention_days: int = int(os.getenv("COLLECTOR_RETENTION_DAYS", "90"))
+
+
+@dataclass
 class SystemConfig:
     db: DatabaseConfig = field(default_factory=DatabaseConfig)
     redis: RedisConfig = field(default_factory=RedisConfig)
     exchanges: list[ExchangeConfig] = field(default_factory=lambda: [ExchangeConfig()])
     resources: ResourceConfig = field(default_factory=ResourceConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
+    collector: CollectorConfig = field(default_factory=CollectorConfig)
     strategies_dir: Path = Path(os.getenv("STRATEGIES_DIR", "strategies_user"))
     data_dir: Path = Path("data")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")

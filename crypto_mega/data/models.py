@@ -5,13 +5,33 @@ from __future__ import annotations
 import datetime
 import uuid
 
-from sqlalchemy import Boolean, DateTime, Float, Integer, String, Text, func
+from sqlalchemy import BigInteger, Boolean, DateTime, Float, Index, Integer, String, Text, UniqueConstraint, func
 from sqlalchemy.ext.asyncio import AsyncAttrs, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
 class Base(AsyncAttrs, DeclarativeBase):
     pass
+
+
+class CandleRecord(Base):
+    """OHLCV candle stored locally. One row = one candle."""
+    __tablename__ = "candles"
+    __table_args__ = (
+        UniqueConstraint("symbol", "timeframe", "timestamp_ms", name="uq_candle"),
+        Index("ix_candle_lookup", "symbol", "timeframe", "timestamp_ms"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    symbol: Mapped[str] = mapped_column(String(30), nullable=False)       # e.g. BTC/USDT
+    timeframe: Mapped[str] = mapped_column(String(5), nullable=False)     # e.g. 1m, 5m, 1h
+    timestamp_ms: Mapped[int] = mapped_column(BigInteger, nullable=False) # unix ms
+    open: Mapped[float] = mapped_column(Float, nullable=False)
+    high: Mapped[float] = mapped_column(Float, nullable=False)
+    low: Mapped[float] = mapped_column(Float, nullable=False)
+    close: Mapped[float] = mapped_column(Float, nullable=False)
+    volume: Mapped[float] = mapped_column(Float, nullable=False)
+    collected_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
 class StrategyRecord(Base):

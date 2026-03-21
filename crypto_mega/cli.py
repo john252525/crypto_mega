@@ -46,6 +46,61 @@ def run(strategy_dir: str, symbols: str, interval: float):
 
 
 @main.command()
+@click.option("--symbols", default=None, help="Comma-separated symbols (default from COLLECTOR_SYMBOLS)")
+@click.option("--timeframes", default=None, help="Comma-separated timeframes (default from COLLECTOR_TIMEFRAMES)")
+@click.option("--interval", default=None, type=float, help="Collection interval in seconds")
+def collect(symbols: str | None, timeframes: str | None, interval: float | None):
+    """Run the candle collector — fetches candles from exchange into local DB."""
+    asyncio.run(_run_collector(symbols, timeframes, interval))
+
+
+async def _run_collector(symbols: str | None, timeframes: str | None, interval: float | None):
+    from crypto_mega.config.settings import SystemConfig
+    from crypto_mega.data.collector import CandleCollector
+    from crypto_mega.data.models import init_db
+    from crypto_mega.data.provider import DataProvider
+
+    config = SystemConfig()
+
+    # Override from CLI args
+    sym_list = [s.strip() for s in symbols.split(",")] if symbols else config.collector.symbols
+    tf_list = [t.strip() for t in timeframes.split(",")] if timeframes else config.collector.timeframes
+    collect_interval = interval or config.collector.interval_sec
+
+    # Init DB
+    session_factory = await init_db(config.db.url)
+
+    # Init exchange
+    dp = DataProvider()
+    ex_cfg = config.exchanges[0]
+    exchange_config = {"enableRateLimit": True}
+    if ex_cfg.api_key:
+        exchange_config["apiKey"] = ex_cfg.api_key
+        exchange_config["secret"] = ex_cfg.api_secret
+    if ex_cfg.sandbox:
+        exchange_config["sandbox"] = True
+    await dp.init_exchange(ex_cfg.exchange_id, exchange_config)
+
+    # Create and run collector
+    collector = CandleCollector(
+        session_factory=session_factory,
+        data_provider=dp,
+        symbols=sym_list,
+        timeframes=tf_list,
+        collect_interval=collect_interval,
+        candle_limit=config.collector.candle_limit,
+        retention_days=config.collector.retention_days,
+    )
+
+    try:
+        await collector.run_loop()
+    except KeyboardInterrupt:
+        collector.stop()
+    finally:
+        await dp.close()
+
+
+@main.command()
 @click.argument("strategy_name")
 @click.option("--symbols", default="BTC/USDT", help="Comma-separated trading pairs")
 @click.option("--timeframe", default="1h", help="Timeframe")
