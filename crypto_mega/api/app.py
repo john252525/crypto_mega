@@ -121,9 +121,17 @@ _system_alerts: list[dict] = []  # [{ts, level, component, message}]
 
 
 def add_system_alert(level: str, component: str, message: str):
-    """Add a system alert visible in the UI status banner."""
+    """Add a system alert visible in the UI status banner. Deduplicates recent alerts."""
+    now = time.time()
+    # Deduplicate: don't repeat the same component+level within 5 minutes
+    for existing in reversed(_system_alerts):
+        if now - existing["ts"] > 300:
+            break  # only check last 5 min
+        if existing["component"] == component and existing["level"] == level:
+            return  # already have a recent alert for this
+
     _system_alerts.append({
-        "ts": time.time(),
+        "ts": now,
         "level": level,
         "component": component,
         "message": message,
@@ -245,7 +253,7 @@ async def periodic_health_check():
                     f"Signal engine crashed! {exc or 'Task finished unexpectedly'}"
                 )
 
-            # Check data staleness
+            # Check data staleness (relative to timeframe)
             for key, df in data_provider._cache.items():
                 if len(df) == 0:
                     continue
@@ -254,10 +262,18 @@ async def periodic_health_check():
                     age = now - last_ts.timestamp()
                 else:
                     age = 0
-                if age > 600:  # 10 min stale
+                # Extract timeframe from key (e.g. "BTC/USDT_1h" -> "1h")
+                parts = key.split("_")
+                tf = parts[-1] if len(parts) > 1 else "1h"
+                try:
+                    tf_seconds = data_provider._timeframe_to_delta(tf).total_seconds()
+                except Exception:
+                    tf_seconds = 3600
+                # Alert only if data is >2x the timeframe old (e.g. >2h for 1h candles)
+                if age > tf_seconds * 2:
                     add_system_alert(
                         "warning", "data",
-                        f"Data stale for {key}: last candle {age/60:.0f}min ago"
+                        f"{key}: no new candle for {age/60:.0f}min (expected every {tf_seconds/60:.0f}min)"
                     )
 
         except Exception as e:
@@ -1355,19 +1371,32 @@ async def health():
     exchange_id = data_provider._exchange_id or "none"
     uptime = time.time() - _app_start_time
 
-    # Data staleness check
+    # Data staleness check — relative to the smallest active timeframe
     data_status = "ok"
     data_age_sec = 0.0
+    min_tf_seconds = 3600  # default assume 1h
     if data_provider._cache:
-        newest = max(
-            (df.iloc[-1]["timestamp"].timestamp() if len(df) > 0 else 0)
-            for df in data_provider._cache.values()
-        )
+        newest = 0
+        for key, df in data_provider._cache.items():
+            if len(df) == 0:
+                continue
+            ts = df.iloc[-1]["timestamp"].timestamp()
+            if ts > newest:
+                newest = ts
+            # Extract timeframe to get the right staleness threshold
+            parts = key.split("_")
+            tf = parts[-1] if len(parts) > 1 else "1h"
+            try:
+                tf_sec = data_provider._timeframe_to_delta(tf).total_seconds()
+                min_tf_seconds = min(min_tf_seconds, tf_sec)
+            except Exception:
+                pass
         data_age_sec = time.time() - newest if newest > 0 else 0
-        if data_age_sec > 300:  # 5 min stale
-            data_status = "stale"
-        elif data_age_sec > 600:  # 10 min — problem
+        # Stale if data is older than 1.5x the timeframe
+        if data_age_sec > min_tf_seconds * 3:
             data_status = "critical"
+        elif data_age_sec > min_tf_seconds * 2:
+            data_status = "stale"
     else:
         data_status = "no_data"
 

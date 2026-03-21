@@ -80,15 +80,18 @@ class DataProvider:
         since: datetime | None = None,
     ) -> pd.DataFrame:
         """Fetch OHLCV data and return as DataFrame."""
-        cache_key = f"{symbol}_{timeframe}_{limit}"
+        cache_key = f"{symbol}_{timeframe}"
 
         if cache_key in self._cache:
             cached = self._cache[cache_key]
             age = datetime.utcnow() - cached.iloc[-1]["timestamp"]
             # Refresh if cache is older than 1 timeframe unit
             if age < self._timeframe_to_delta(timeframe):
-                logger.debug(f"Cache hit: {symbol} {timeframe} (age={age})")
-                return cached
+                # If cached has enough rows, return from cache
+                if len(cached) >= limit:
+                    logger.debug(f"Cache hit: {cache_key} (age={age}, rows={len(cached)})")
+                    return cached.tail(limit).reset_index(drop=True)
+                logger.debug(f"Cache hit but need more rows: {cache_key} ({len(cached)} < {limit})")
 
         logger.info(
             f"Fetching OHLCV: {symbol} {timeframe} limit={limit}"

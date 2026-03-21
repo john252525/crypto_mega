@@ -1008,27 +1008,28 @@ async function refreshHealth() {
       dataDot.parentElement.title = 'No data yet';
     }
 
-    // Alert banner
+    // Alert banner — show only last 3 unique alerts from the past 10 minutes
     const banner = document.getElementById('alert-banner');
     if (h.alerts && h.alerts.length > 0) {
-      const recent = h.alerts.filter(a => (Date.now()/1000 - a.ts) < 3600);
-      if (recent.length > 0) {
-        const errors = recent.filter(a => a.level === 'error');
-        const warnings = recent.filter(a => a.level === 'warning');
-        let html = '';
-        if (errors.length > 0) {
-          html += errors.map(a =>
-            `<span class="text-loss font-bold mr-4">ERR [${a.component}]: ${a.message}</span>`
-          ).join('');
-        }
-        if (warnings.length > 0) {
-          html += warnings.map(a =>
-            `<span class="text-warn mr-4">WARN [${a.component}]: ${a.message}</span>`
-          ).join('');
-        }
+      const recent = h.alerts.filter(a => (Date.now()/1000 - a.ts) < 600);
+      // Deduplicate by component
+      const seen = new Set();
+      const unique = [];
+      for (const a of recent.reverse()) {
+        const k = a.component + ':' + a.level;
+        if (!seen.has(k)) { seen.add(k); unique.push(a); }
+      }
+      if (unique.length > 0) {
+        const show = unique.slice(0, 3);
+        const hasErr = show.some(a => a.level === 'error');
+        const html = show.map(a => {
+          const cls = a.level === 'error' ? 'text-loss font-bold' : 'text-warn';
+          const tag = a.level === 'error' ? 'ERR' : 'WARN';
+          return `<span class="${cls} mr-4">${tag} [${a.component}]: ${a.message}</span>`;
+        }).join('');
         banner.innerHTML = html;
         banner.className = 'px-6 py-2 text-xs border-b border-border ' +
-          (errors.length > 0 ? 'bg-danger/10' : 'bg-warn/10');
+          (hasErr ? 'bg-danger/10' : 'bg-warn/10');
       } else {
         banner.className = 'hidden';
       }
