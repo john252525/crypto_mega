@@ -153,19 +153,8 @@ async def lifespan(app: FastAPI):
     global _app_start_time
     _app_start_time = time.time()
 
-    # Init database (optional — works without it)
-    try:
-        from crypto_mega.data.models import init_db
-        db_session = await asyncio.wait_for(init_db(config.db.url), timeout=15)
-        logger.info(f"Database initialized: {config.db.url[:30]}...")
-    except Exception as e:
-        logger.warning(f"Database not available, running without persistence: {e}")
-        add_system_alert(
-            "warning", "database",
-            f"No database connected — paper trading data won't persist across restarts. "
-            f"Add PostgreSQL in Railway dashboard to fix. Error: {e}"
-        )
-        db_session = None
+    # Init database with background retry — app starts fast, DB connects when ready
+    db_retry_task = asyncio.create_task(_connect_db_with_retry())
 
     # Load strategies from directory
     try:
@@ -194,7 +183,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # Stop background tasks
-    for task in [health_task, auto_task]:
+    for task in [health_task, auto_task, db_retry_task]:
         if task and not task.done():
             task.cancel()
             try:
@@ -222,6 +211,32 @@ async def lifespan(app: FastAPI):
         logger.warning(f"Error closing execution engine: {e}")
 
     logger.info("App shutdown complete")
+
+
+async def _connect_db_with_retry():
+    """Connect to database with exponential backoff. Retries until success or shutdown."""
+    global db_session
+    from crypto_mega.data.models import init_db
+
+    delays = [0, 5, 10, 20, 30, 60]  # seconds between attempts
+    for attempt, delay in enumerate(delays):
+        if delay > 0:
+            logger.info(f"Database retry #{attempt + 1} in {delay}s...")
+            await asyncio.sleep(delay)
+        try:
+            db_session = await asyncio.wait_for(init_db(config.db.url), timeout=15)
+            logger.info(f"Database connected: {config.db.url[:30]}...")
+            return
+        except Exception as e:
+            logger.warning(f"Database connection attempt #{attempt + 1} failed: {e}")
+
+    # All retries exhausted
+    add_system_alert(
+        "error", "database",
+        f"Could not connect to database after {len(delays)} attempts. "
+        f"Check DATABASE_URL in Railway variables."
+    )
+    logger.error("Database connection failed permanently — app running without persistence")
 
 
 async def periodic_health_check():
