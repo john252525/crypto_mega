@@ -1437,18 +1437,48 @@ function renderExploreLeaderboard(data) {
   }).join('');
 }
 
-async function explorerAction(action) {
+async function explorerAction(action, btn) {
+  // Show loading state on the clicked button
+  const allBtns = document.querySelectorAll('[onclick^="explorerAction"]');
+  allBtns.forEach(b => b.disabled = true);
+  const statusEl = document.getElementById('explore-status');
+  const detailEl = document.getElementById('explore-status-detail');
+  const origStatus = statusEl.textContent;
+  const origDetail = detailEl.textContent;
+
   const opts = { method: 'POST' };
+  let result;
+
   if (action === 'start') {
-    await api('/explore/start', opts);
+    statusEl.textContent = 'starting...';
+    statusEl.className = 'text-2xl font-bold text-warn pulse';
+    detailEl.textContent = 'Connecting to exchanges & discovering symbols...';
+    result = await api('/explore/start', opts);
   } else if (action === 'stop') {
-    await api('/explore/stop', opts);
+    statusEl.textContent = 'stopping...';
+    result = await api('/explore/stop', opts);
   } else if (action === 'generate') {
-    await api('/explore/generate?count=50', opts);
+    detailEl.textContent = 'Generating tasks... (discovering symbols if needed)';
+    statusEl.className = 'text-2xl font-bold text-warn pulse';
+    result = await api('/explore/generate?count=50', opts);
   } else if (action === 'refresh-symbols') {
-    await api('/explore/refresh-symbols', opts);
+    detailEl.textContent = 'Connecting to exchanges...';
+    statusEl.className = 'text-2xl font-bold text-warn pulse';
+    result = await api('/explore/refresh-symbols', opts);
   }
-  setTimeout(() => loadExploreTab(), 500);
+
+  // Show result message
+  if (result && result.message) {
+    detailEl.textContent = result.message;
+  } else if (result && result.error) {
+    detailEl.textContent = 'Error: ' + (result.detail || result.error);
+    statusEl.className = 'text-2xl font-bold text-danger';
+  }
+
+  allBtns.forEach(b => b.disabled = false);
+
+  // Refresh the tab data after a short delay
+  setTimeout(() => loadExploreTab(), 1500);
 }
 
 

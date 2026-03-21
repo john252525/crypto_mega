@@ -1514,14 +1514,14 @@ async def explore_start():
     """Start the strategy explorer."""
     global _strategy_explorer, _explorer_task
     if _strategy_explorer and _strategy_explorer._running:
-        return {"status": "already running"}
+        return {"status": "already_running", "message": "Explorer is already running"}
     if not db_session:
         raise HTTPException(503, "Database not connected")
 
     from crypto_mega.engine.explorer import StrategyExplorer
     _strategy_explorer = StrategyExplorer(db_session, config.exploration)
     _explorer_task = asyncio.create_task(_strategy_explorer.run_loop())
-    return {"status": "started"}
+    return {"status": "started", "message": "Explorer started. Discovering symbols from exchanges..."}
 
 
 @app.post("/explore/stop")
@@ -1529,22 +1529,40 @@ async def explore_stop():
     """Stop the strategy explorer."""
     if _strategy_explorer:
         _strategy_explorer.stop()
-        return {"status": "stopped"}
-    return {"status": "not running"}
+        return {"status": "stopped", "message": "Explorer stopped"}
+    return {"status": "not_running", "message": "Explorer was not running"}
 
 
 @app.post("/explore/generate")
 async def explore_generate(count: int = 10):
     """Manually generate exploration tasks."""
+    global _strategy_explorer
     if not db_session:
         raise HTTPException(503, "Database not connected")
 
     from crypto_mega.engine.explorer import StrategyExplorer
-    explorer = _strategy_explorer or StrategyExplorer(db_session, config.exploration)
-    if not explorer._available_symbols:
-        await explorer.refresh_symbols()
-    generated = await explorer.generate_batch(count)
-    return {"generated": generated}
+
+    # Reuse existing explorer or create persistent one
+    if _strategy_explorer is None:
+        _strategy_explorer = StrategyExplorer(db_session, config.exploration)
+
+    if not _strategy_explorer._available_symbols:
+        await _strategy_explorer.refresh_symbols()
+
+    if not _strategy_explorer._available_symbols:
+        return {
+            "generated": 0,
+            "message": "No symbols discovered. Check exchange connectivity.",
+            "exchanges_tried": config.exploration.exchanges,
+        }
+
+    generated = await _strategy_explorer.generate_batch(count)
+    dispatched = await _strategy_explorer.dispatch_tasks()
+    return {
+        "generated": generated,
+        "dispatched": dispatched,
+        "message": f"Generated {generated} tasks, dispatched {dispatched} to workers",
+    }
 
 
 @app.get("/explore/promotions")
@@ -1573,14 +1591,25 @@ async def explore_symbols():
 @app.post("/explore/refresh-symbols")
 async def explore_refresh_symbols():
     """Manually refresh available symbols from exchanges."""
-    if not _strategy_explorer:
-        raise HTTPException(400, "Explorer not started")
+    global _strategy_explorer
+    if not db_session:
+        raise HTTPException(503, "Database not connected")
+
+    from crypto_mega.engine.explorer import StrategyExplorer
+    if _strategy_explorer is None:
+        _strategy_explorer = StrategyExplorer(db_session, config.exploration)
+
     await _strategy_explorer.refresh_symbols()
+    symbols_info = {
+        ex: len(syms)
+        for ex, syms in _strategy_explorer._available_symbols.items()
+    }
+    total = sum(symbols_info.values())
     return {
-        "symbols": {
-            ex: len(syms)
-            for ex, syms in _strategy_explorer._available_symbols.items()
-        },
+        "symbols": symbols_info,
+        "total": total,
+        "message": f"Discovered {total} symbols from {len(symbols_info)} exchanges" if total > 0
+                   else "No symbols found. Exchanges may be unreachable.",
     }
 
 
