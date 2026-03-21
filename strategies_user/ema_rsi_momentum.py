@@ -78,39 +78,75 @@ class EmaRsiMomentum(BaseStrategy):
             rsi_component = abs(rsi - 50) / 100  # 0-0.5
             spread_component = min(spread / 2, 0.3)  # cap at 0.3
 
+            # Build detailed metadata for signal detail view
+            recent = df.tail(10)
+            candles = [
+                {
+                    "t": str(row.get("timestamp", "")),
+                    "o": round(row["open"], 2),
+                    "h": round(row["high"], 2),
+                    "l": round(row["low"], 2),
+                    "c": round(row["close"], 2),
+                    "v": round(row["volume"], 2) if row["volume"] else 0,
+                }
+                for _, row in recent.iterrows()
+            ]
+
+            base_meta = {
+                "rsi": round(rsi, 2),
+                "ema_fast": round(ema_f, 2),
+                "ema_slow": round(ema_s, 2),
+                "ema_spread_pct": round(spread, 4),
+                "rsi_threshold_long": self.rsi_long_min,
+                "rsi_threshold_short": self.rsi_short_max,
+                "ema_fast_period": self.ema_fast,
+                "ema_slow_period": self.ema_slow,
+                "candles": candles,
+            }
+
             # LONG: price > EMA fast > EMA slow, RSI confirms
             if price > ema_f > ema_s and rsi > self.rsi_long_min:
                 strength = min(1.0, 0.3 + rsi_component + spread_component)
+                sl = ema_s * 0.995
+                tp = price + (price - ema_s) * 1.5
                 signals.append(Signal(
                     symbol=symbol,
                     direction=SignalDirection.LONG,
-                    strength=max(0.55, strength),  # ensure above executor threshold
+                    strength=max(0.55, strength),
                     price=price,
-                    stop_loss=ema_s * 0.995,  # just below slow EMA
-                    take_profit=price + (price - ema_s) * 1.5,  # 1.5x the EMA distance
+                    stop_loss=sl,
+                    take_profit=tp,
                     metadata={
-                        "rsi": round(rsi, 2),
-                        "ema_fast": round(ema_f, 2),
-                        "ema_slow": round(ema_s, 2),
-                        "ema_spread_pct": round(spread, 4),
+                        **base_meta,
+                        "reason": (
+                            f"Uptrend confirmed: price {price:.2f} > EMA{self.ema_fast} {ema_f:.2f} > EMA{self.ema_slow} {ema_s:.2f}. "
+                            f"RSI={rsi:.1f} > {self.rsi_long_min} confirms momentum. "
+                            f"EMA spread {spread:.3f}% shows trend strength. "
+                            f"SL at {sl:.2f} (below slow EMA), TP at {tp:.2f} (1.5x EMA distance)."
+                        ),
                     },
                 ))
 
             # SHORT: price < EMA fast < EMA slow, RSI confirms
             elif price < ema_f < ema_s and rsi < self.rsi_short_max:
                 strength = min(1.0, 0.3 + rsi_component + spread_component)
+                sl = ema_s * 1.005
+                tp = price - (ema_s - price) * 1.5
                 signals.append(Signal(
                     symbol=symbol,
                     direction=SignalDirection.SHORT,
-                    strength=max(0.55, strength),  # ensure above executor threshold
+                    strength=max(0.55, strength),
                     price=price,
-                    stop_loss=ema_s * 1.005,  # just above slow EMA
-                    take_profit=price - (ema_s - price) * 1.5,
+                    stop_loss=sl,
+                    take_profit=tp,
                     metadata={
-                        "rsi": round(rsi, 2),
-                        "ema_fast": round(ema_f, 2),
-                        "ema_slow": round(ema_s, 2),
-                        "ema_spread_pct": round(spread, 4),
+                        **base_meta,
+                        "reason": (
+                            f"Downtrend confirmed: price {price:.2f} < EMA{self.ema_fast} {ema_f:.2f} < EMA{self.ema_slow} {ema_s:.2f}. "
+                            f"RSI={rsi:.1f} < {self.rsi_short_max} confirms bearish momentum. "
+                            f"EMA spread {spread:.3f}% shows trend strength. "
+                            f"SL at {sl:.2f} (above slow EMA), TP at {tp:.2f} (1.5x EMA distance)."
+                        ),
                     },
                 ))
 

@@ -50,27 +50,71 @@ class SMACrossover(BaseStrategy):
             prev = df.iloc[-2]
             curr = df.iloc[-1]
 
+            # Recent candles for detail view
+            recent = df.tail(10)
+            candles = [
+                {
+                    "t": str(row.get("timestamp", "")),
+                    "o": round(row["open"], 2),
+                    "h": round(row["high"], 2),
+                    "l": round(row["low"], 2),
+                    "c": round(row["close"], 2),
+                    "v": round(row["volume"], 2) if row.get("volume") else 0,
+                }
+                for _, row in recent.iterrows()
+            ]
+
+            base_meta = {
+                "sma_fast": round(curr["sma_fast"], 2),
+                "sma_slow": round(curr["sma_slow"], 2),
+                "prev_sma_fast": round(prev["sma_fast"], 2),
+                "prev_sma_slow": round(prev["sma_slow"], 2),
+                "fast_period": self.fast_period,
+                "slow_period": self.slow_period,
+                "candles": candles,
+            }
+
             # Crossover detection
             if prev["sma_fast"] <= prev["sma_slow"] and curr["sma_fast"] > curr["sma_slow"]:
+                sl = curr["close"] * 0.98
+                tp = curr["close"] * 1.04
                 signals.append(Signal(
                     symbol=symbol,
                     direction=SignalDirection.LONG,
                     strength=0.7,
                     price=curr["close"],
-                    stop_loss=curr["close"] * 0.98,
-                    take_profit=curr["close"] * 1.04,
-                    metadata={"fast": self.fast_period, "slow": self.slow_period},
+                    stop_loss=sl,
+                    take_profit=tp,
+                    metadata={
+                        **base_meta,
+                        "reason": (
+                            f"Bullish SMA crossover: SMA{self.fast_period} crossed above SMA{self.slow_period}. "
+                            f"Previous: fast={prev['sma_fast']:.2f} <= slow={prev['sma_slow']:.2f}. "
+                            f"Current: fast={curr['sma_fast']:.2f} > slow={curr['sma_slow']:.2f}. "
+                            f"Entry at {curr['close']:.2f}, SL={sl:.2f} (-2%), TP={tp:.2f} (+4%)."
+                        ),
+                    },
                 ))
 
             elif prev["sma_fast"] >= prev["sma_slow"] and curr["sma_fast"] < curr["sma_slow"]:
+                sl = curr["close"] * 1.02
+                tp = curr["close"] * 0.96
                 signals.append(Signal(
                     symbol=symbol,
                     direction=SignalDirection.SHORT,
                     strength=0.7,
                     price=curr["close"],
-                    stop_loss=curr["close"] * 1.02,
-                    take_profit=curr["close"] * 0.96,
-                    metadata={"fast": self.fast_period, "slow": self.slow_period},
+                    stop_loss=sl,
+                    take_profit=tp,
+                    metadata={
+                        **base_meta,
+                        "reason": (
+                            f"Bearish SMA crossover: SMA{self.fast_period} crossed below SMA{self.slow_period}. "
+                            f"Previous: fast={prev['sma_fast']:.2f} >= slow={prev['sma_slow']:.2f}. "
+                            f"Current: fast={curr['sma_fast']:.2f} < slow={curr['sma_slow']:.2f}. "
+                            f"Entry at {curr['close']:.2f}, SL={sl:.2f} (+2%), TP={tp:.2f} (-4%)."
+                        ),
+                    },
                 ))
 
         return signals

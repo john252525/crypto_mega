@@ -45,6 +45,17 @@ tailwind.config = {
   .sparkline { display: inline-block; vertical-align: middle; }
   .sparkline canvas { display: block; }
   .log-line { font-size: 11px; line-height: 1.6; white-space: pre-wrap; word-break: break-all; border-bottom: 1px solid #111; padding: 1px 0; }
+  .signal-row { cursor: pointer; transition: background 0.15s; }
+  .signal-row:hover { background: rgba(30,30,46,0.5); }
+  .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.75); z-index: 100; display: flex; align-items: center; justify-content: center; }
+  .modal-box { background: #12121a; border: 1px solid #1e1e2e; border-radius: 12px; max-width: 720px; width: 95%; max-height: 85vh; overflow-y: auto; padding: 24px; position: relative; }
+  .modal-close { position: absolute; top: 12px; right: 16px; cursor: pointer; color: #666; font-size: 20px; }
+  .modal-close:hover { color: #fff; }
+  .candle-green { color: #00ff88; }
+  .candle-red { color: #ff4444; }
+  .indicator-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #1a1a2a; }
+  .indicator-label { color: #888; }
+  .indicator-value { font-weight: 600; }
   .log-DEBUG { color: #555; }
   .log-INFO { color: #8bc34a; }
   .log-WARNING { color: #ff9800; }
@@ -624,6 +635,14 @@ class MyStrategy(BaseStrategy):
 
 </main>
 
+<!-- Signal/Position detail modal -->
+<div id="detail-modal" class="modal-overlay hidden" onclick="if(event.target===this)closeDetailModal()">
+  <div class="modal-box">
+    <span class="modal-close" onclick="closeDetailModal()">&times;</span>
+    <div id="detail-modal-content"></div>
+  </div>
+</div>
+
 <script>
 // ─── State ───
 let ws = null;
@@ -723,7 +742,7 @@ async function refreshDashboard() {
     signals.signals.slice().reverse().slice(0, 10).forEach(s => {
       const color = s.direction === 'long' ? 'text-profit' : s.direction === 'short' ? 'text-loss' : 'text-gray-400';
       const time = new Date(s.timestamp * 1000).toLocaleTimeString();
-      html += `<div class="flex justify-between py-0.5 border-b border-border/30"><span><span class="${color} font-bold uppercase">${s.direction}</span> ${s.symbol} @ ${s.price.toFixed(2)}</span><span class="text-gray-600">${s.strategy_id} | str=${s.strength} | ${time}</span></div>`;
+      html += `<div class="signal-row flex justify-between py-0.5 border-b border-border/30" onclick="showSignalDetail('${s.id}')"><span><span class="${color} font-bold uppercase">${s.direction}</span> ${s.symbol} @ ${s.price.toFixed(2)}</span><span class="text-gray-600">${s.strategy_name || s.strategy_id} | str=${s.strength} | ${time}</span></div>`;
     });
     document.getElementById('recent-signals').innerHTML = html;
   }
@@ -787,9 +806,9 @@ async function loadSignalFeed() {
     const time = new Date(s.timestamp * 1000).toLocaleTimeString();
     const sl = s.stop_loss ? ` SL=${s.stop_loss.toFixed(2)}` : '';
     const tp = s.take_profit ? ` TP=${s.take_profit.toFixed(2)}` : '';
-    return `<div class="flex justify-between py-1 border-b border-border/30">
+    return `<div class="signal-row flex justify-between py-1 border-b border-border/30" onclick="showSignalDetail('${s.id}')">
       <span><span class="${color} font-bold uppercase w-12 inline-block">${s.direction}</span> <span class="text-blue">${s.symbol}</span> @ ${s.price.toFixed(2)}${sl}${tp}</span>
-      <span class="text-gray-600">${s.strategy_id} | str=${s.strength} | ${time}</span>
+      <span class="text-gray-600">${s.strategy_name || s.strategy_id} | str=${s.strength} | ${time}</span>
     </div>`;
   }).join('');
 }
@@ -818,14 +837,14 @@ async function loadPositions(type) {
     body.innerHTML = positions.map(p => {
       const color = p.unrealized_pnl_pct >= 0 ? 'text-profit' : 'text-loss';
       const dirColor = p.direction === 'long' ? 'text-profit' : 'text-loss';
-      return `<tr class="border-b border-border/30"><td class="py-1 px-2">${p.strategy_name}<br><span class="text-gray-600">${p.strategy_id}</span></td><td class="py-1 px-2 text-blue">${p.symbol}</td><td class="py-1 px-2 ${dirColor} font-bold uppercase">${p.direction}</td><td class="py-1 px-2 text-right">${p.entry_price.toFixed(2)}</td><td class="py-1 px-2 text-right">${p.current_price.toFixed(2)}</td><td class="py-1 px-2 text-right ${color} font-bold">${p.unrealized_pnl_pct >= 0 ? '+' : ''}${p.unrealized_pnl_pct.toFixed(2)}%</td><td class="py-1 px-2 text-right">${p.stop_loss || '-'}</td><td class="py-1 px-2 text-right">${p.take_profit || '-'}</td></tr>`;
+      return `<tr class="signal-row border-b border-border/30" onclick="showPositionDetail('${p.id}')"><td class="py-1 px-2">${p.strategy_name}<br><span class="text-gray-600">${p.strategy_id}</span></td><td class="py-1 px-2 text-blue">${p.symbol}</td><td class="py-1 px-2 ${dirColor} font-bold uppercase">${p.direction}</td><td class="py-1 px-2 text-right">${p.entry_price.toFixed(2)}</td><td class="py-1 px-2 text-right">${p.current_price.toFixed(2)}</td><td class="py-1 px-2 text-right ${color} font-bold">${p.unrealized_pnl_pct >= 0 ? '+' : ''}${p.unrealized_pnl_pct.toFixed(2)}%</td><td class="py-1 px-2 text-right">${p.stop_loss || '-'}</td><td class="py-1 px-2 text-right">${p.take_profit || '-'}</td></tr>`;
     }).join('');
   } else {
     header.innerHTML = '<th class="text-left py-2 px-2">Strategy</th><th class="text-left py-2 px-2">Symbol</th><th class="py-2 px-2">Dir</th><th class="text-right py-2 px-2">Entry</th><th class="text-right py-2 px-2">Exit</th><th class="text-right py-2 px-2">P&L %</th><th class="py-2 px-2">Reason</th><th class="py-2 px-2">Closed</th>';
     body.innerHTML = positions.map(p => {
       const color = p.realized_pnl_pct >= 0 ? 'text-profit' : 'text-loss';
       const dirColor = p.direction === 'long' ? 'text-profit' : 'text-loss';
-      return `<tr class="border-b border-border/30"><td class="py-1 px-2">${p.strategy_name}<br><span class="text-gray-600">${p.strategy_id}</span></td><td class="py-1 px-2 text-blue">${p.symbol}</td><td class="py-1 px-2 ${dirColor} font-bold uppercase">${p.direction}</td><td class="py-1 px-2 text-right">${p.entry_price.toFixed(2)}</td><td class="py-1 px-2 text-right">${(p.exit_price || 0).toFixed(2)}</td><td class="py-1 px-2 text-right ${color} font-bold">${p.realized_pnl_pct >= 0 ? '+' : ''}${p.realized_pnl_pct.toFixed(2)}%</td><td class="py-1 px-2 uppercase">${p.close_reason}</td><td class="py-1 px-2 text-gray-600">${p.closed_at ? new Date(p.closed_at).toLocaleString() : ''}</td></tr>`;
+      return `<tr class="signal-row border-b border-border/30" onclick="showPositionDetail('${p.id}')"><td class="py-1 px-2">${p.strategy_name}<br><span class="text-gray-600">${p.strategy_id}</span></td><td class="py-1 px-2 text-blue">${p.symbol}</td><td class="py-1 px-2 ${dirColor} font-bold uppercase">${p.direction}</td><td class="py-1 px-2 text-right">${p.entry_price.toFixed(2)}</td><td class="py-1 px-2 text-right">${(p.exit_price || 0).toFixed(2)}</td><td class="py-1 px-2 text-right ${color} font-bold">${p.realized_pnl_pct >= 0 ? '+' : ''}${p.realized_pnl_pct.toFixed(2)}%</td><td class="py-1 px-2 uppercase">${p.close_reason}</td><td class="py-1 px-2 text-gray-600">${p.closed_at ? new Date(p.closed_at).toLocaleString() : ''}</td></tr>`;
     }).join('');
   }
 }
@@ -1698,6 +1717,215 @@ async function runGapCheck() {
       ${gapHtml}
     </div>`;
   }).join('');
+}
+
+// ─── Signal / Position Detail Modal ───
+
+function closeDetailModal() {
+  document.getElementById('detail-modal').classList.add('hidden');
+}
+
+// Close on Escape
+document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetailModal(); });
+
+async function showSignalDetail(signalId) {
+  const data = await api(`/paper/signal/${signalId}`);
+  if (data.error) return;
+  renderDetailModal(data, 'signal');
+}
+
+async function showPositionDetail(positionId) {
+  const data = await api(`/paper/position/${positionId}`);
+  if (data.error) return;
+  renderDetailModal(data, 'position');
+}
+
+function renderDetailModal(data, type) {
+  const modal = document.getElementById('detail-modal');
+  const content = document.getElementById('detail-modal-content');
+  const meta = data.metadata || {};
+  const dirColor = data.direction === 'long' ? 'text-profit' : 'text-loss';
+  const dirBg = data.direction === 'long' ? 'bg-profit/10' : 'bg-loss/10';
+
+  // Header
+  let html = `
+    <div class="flex items-center gap-3 mb-4">
+      <span class="${dirBg} ${dirColor} font-bold uppercase px-3 py-1 rounded text-sm">${data.direction}</span>
+      <span class="text-accent text-lg font-bold">${data.symbol}</span>
+      <span class="text-gray-500 text-sm">@ ${(data.price || data.entry_price || 0).toFixed(2)}</span>
+    </div>
+  `;
+
+  // Strategy info
+  const stratName = data.strategy_name || data.strategy_id || '?';
+  const ts = data.timestamp ? new Date(data.timestamp * 1000).toLocaleString() : (data.opened_at || '');
+  html += `
+    <div class="grid grid-cols-2 gap-3 mb-4 text-xs">
+      <div class="bg-bg rounded p-3">
+        <div class="text-gray-500 mb-1">Strategy</div>
+        <div class="font-semibold">${stratName}</div>
+        <div class="text-gray-600 mt-1">${data.strategy_id || ''}</div>
+      </div>
+      <div class="bg-bg rounded p-3">
+        <div class="text-gray-500 mb-1">Time</div>
+        <div class="font-semibold">${ts}</div>
+        <div class="text-gray-600 mt-1">Strength: <span class="text-accent">${(data.strength || 0).toFixed(3)}</span></div>
+      </div>
+    </div>
+  `;
+
+  // Price levels
+  html += `<div class="grid grid-cols-3 gap-3 mb-4 text-xs">`;
+  if (data.entry_price != null) {
+    html += `<div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Entry</div><div class="font-bold text-sm">${data.entry_price.toFixed(2)}</div></div>`;
+  }
+  if (data.stop_loss != null) {
+    html += `<div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Stop Loss</div><div class="font-bold text-sm text-loss">${data.stop_loss.toFixed(2)}</div></div>`;
+  }
+  if (data.take_profit != null) {
+    html += `<div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Take Profit</div><div class="font-bold text-sm text-profit">${data.take_profit.toFixed(2)}</div></div>`;
+  }
+  html += `</div>`;
+
+  // Position-specific P&L
+  if (type === 'position') {
+    const hasClosed = data.exit_price != null;
+    const pnl = hasClosed ? data.realized_pnl_pct : data.unrealized_pnl_pct;
+    const pnlColor = (pnl || 0) >= 0 ? 'text-profit' : 'text-loss';
+    const pnlLabel = hasClosed ? 'Realized P&L' : 'Unrealized P&L';
+    html += `<div class="grid grid-cols-3 gap-3 mb-4 text-xs">`;
+    if (hasClosed) {
+      html += `<div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Exit</div><div class="font-bold text-sm">${data.exit_price.toFixed(2)}</div></div>`;
+      html += `<div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">${pnlLabel}</div><div class="font-bold text-sm ${pnlColor}">${pnl >= 0 ? '+' : ''}${pnl.toFixed(2)}%</div></div>`;
+      html += `<div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Close Reason</div><div class="font-bold text-sm uppercase ${data.close_reason === 'tp' ? 'text-profit' : data.close_reason === 'sl' ? 'text-loss' : 'text-warn'}">${data.close_reason}</div></div>`;
+    } else {
+      html += `<div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Current</div><div class="font-bold text-sm">${(data.current_price || 0).toFixed(2)}</div></div>`;
+      html += `<div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">${pnlLabel}</div><div class="font-bold text-sm ${pnlColor}">${(pnl||0) >= 0 ? '+' : ''}${(pnl||0).toFixed(2)}%</div></div>`;
+      html += `<div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Status</div><div class="font-bold text-sm text-accent">OPEN</div></div>`;
+    }
+    html += `</div>`;
+  }
+
+  // Reason / argumentation
+  if (meta.reason) {
+    html += `
+      <div class="mb-4">
+        <div class="text-xs text-gray-500 mb-2 font-semibold uppercase">Signal Reasoning</div>
+        <div class="bg-bg rounded p-4 text-sm leading-relaxed text-gray-200 border-l-2 ${data.direction === 'long' ? 'border-profit' : 'border-loss'}">${meta.reason}</div>
+      </div>
+    `;
+  }
+
+  // Indicator values
+  const indicatorKeys = Object.keys(meta).filter(k => !['reason', 'candles'].includes(k));
+  if (indicatorKeys.length > 0) {
+    html += `<div class="mb-4"><div class="text-xs text-gray-500 mb-2 font-semibold uppercase">Indicator Values</div><div class="bg-bg rounded p-3">`;
+    indicatorKeys.forEach(k => {
+      let val = meta[k];
+      let cls = 'text-gray-200';
+      // Color-code RSI
+      if (k === 'rsi') {
+        cls = val < 30 ? 'text-profit' : val > 70 ? 'text-loss' : val < 45 ? 'text-green-300' : val > 55 ? 'text-red-300' : 'text-gray-200';
+      }
+      if (typeof val === 'number') val = val % 1 === 0 ? val : val.toFixed(4);
+      html += `<div class="indicator-row text-xs"><span class="indicator-label">${k}</span><span class="indicator-value ${cls}">${val}</span></div>`;
+    });
+    html += `</div></div>`;
+  }
+
+  // Candle table
+  if (meta.candles && meta.candles.length > 0) {
+    html += `<div class="mb-4"><div class="text-xs text-gray-500 mb-2 font-semibold uppercase">Recent Candles (${meta.candles.length})</div>`;
+
+    // ASCII mini-chart
+    html += renderMiniCandleChart(meta.candles, data);
+
+    // Table
+    html += `<div class="overflow-x-auto mt-2"><table class="w-full text-xs"><thead><tr class="text-gray-500 border-b border-border">
+      <th class="text-left py-1 px-2">Time</th>
+      <th class="text-right py-1 px-2">Open</th>
+      <th class="text-right py-1 px-2">High</th>
+      <th class="text-right py-1 px-2">Low</th>
+      <th class="text-right py-1 px-2">Close</th>
+      <th class="text-right py-1 px-2">Vol</th>
+      <th class="text-right py-1 px-2">Chg %</th>
+    </tr></thead><tbody>`;
+    meta.candles.forEach(c => {
+      const change = c.o > 0 ? ((c.c - c.o) / c.o * 100) : 0;
+      const chgColor = change >= 0 ? 'candle-green' : 'candle-red';
+      const barChar = change >= 0 ? '+' : '-';
+      const tStr = c.t ? c.t.replace(/T/, ' ').slice(0, 19) : '';
+      html += `<tr class="border-b border-border/20">
+        <td class="py-1 px-2 text-gray-500">${tStr}</td>
+        <td class="py-1 px-2 text-right">${c.o}</td>
+        <td class="py-1 px-2 text-right text-profit">${c.h}</td>
+        <td class="py-1 px-2 text-right text-loss">${c.l}</td>
+        <td class="py-1 px-2 text-right font-bold ${chgColor}">${c.c}</td>
+        <td class="py-1 px-2 text-right text-gray-500">${c.v ? c.v.toLocaleString() : '—'}</td>
+        <td class="py-1 px-2 text-right ${chgColor}">${change >= 0 ? '+' : ''}${change.toFixed(2)}%</td>
+      </tr>`;
+    });
+    html += `</tbody></table></div></div>`;
+  }
+
+  content.innerHTML = html;
+  modal.classList.remove('hidden');
+}
+
+function renderMiniCandleChart(candles, signalData) {
+  // SVG candle chart
+  const w = 660, h = 120, pad = 20;
+  const prices = candles.flatMap(c => [c.h, c.l]);
+  const minP = Math.min(...prices);
+  const maxP = Math.max(...prices);
+  const range = maxP - minP || 1;
+  const candleW = Math.min(40, Math.floor((w - pad * 2) / candles.length) - 4);
+  const gap = Math.floor((w - pad * 2) / candles.length);
+
+  const yScale = (p) => pad + (h - 2 * pad) * (1 - (p - minP) / range);
+
+  let svg = `<svg width="${w}" height="${h + 24}" class="w-full" viewBox="0 0 ${w} ${h + 24}" preserveAspectRatio="xMidYMid meet">`;
+  // Grid lines
+  for (let i = 0; i <= 4; i++) {
+    const p = minP + range * i / 4;
+    const y = yScale(p);
+    svg += `<line x1="${pad}" y1="${y}" x2="${w - pad}" y2="${y}" stroke="#1e1e2e" stroke-width="1"/>`;
+    svg += `<text x="${w - pad + 4}" y="${y + 3}" fill="#555" font-size="9">${p.toFixed(1)}</text>`;
+  }
+  // Candles
+  candles.forEach((c, i) => {
+    const x = pad + i * gap + gap / 2;
+    const isGreen = c.c >= c.o;
+    const color = isGreen ? '#00ff88' : '#ff4444';
+    const bodyTop = yScale(Math.max(c.o, c.c));
+    const bodyBot = yScale(Math.min(c.o, c.c));
+    const bodyH = Math.max(1, bodyBot - bodyTop);
+    // Wick
+    svg += `<line x1="${x}" y1="${yScale(c.h)}" x2="${x}" y2="${yScale(c.l)}" stroke="${color}" stroke-width="1"/>`;
+    // Body
+    svg += `<rect x="${x - candleW/2}" y="${bodyTop}" width="${candleW}" height="${bodyH}" fill="${isGreen ? color : color}" rx="1" opacity="${isGreen ? '0.8' : '0.8'}"/>`;
+  });
+
+  // Mark SL/TP/entry lines
+  const entryP = signalData.price || signalData.entry_price;
+  if (entryP && entryP >= minP && entryP <= maxP) {
+    const y = yScale(entryP);
+    svg += `<line x1="${pad}" y1="${y}" x2="${w - pad}" y2="${y}" stroke="#00bfff" stroke-width="1" stroke-dasharray="4,3"/>`;
+    svg += `<text x="${pad}" y="${y - 4}" fill="#00bfff" font-size="9">Entry ${entryP.toFixed(1)}</text>`;
+  }
+  if (signalData.stop_loss && signalData.stop_loss >= minP && signalData.stop_loss <= maxP) {
+    const y = yScale(signalData.stop_loss);
+    svg += `<line x1="${pad}" y1="${y}" x2="${w - pad}" y2="${y}" stroke="#ff4444" stroke-width="1" stroke-dasharray="4,3"/>`;
+    svg += `<text x="${pad}" y="${y - 4}" fill="#ff4444" font-size="9">SL ${signalData.stop_loss.toFixed(1)}</text>`;
+  }
+  if (signalData.take_profit && signalData.take_profit >= minP && signalData.take_profit <= maxP) {
+    const y = yScale(signalData.take_profit);
+    svg += `<line x1="${pad}" y1="${y}" x2="${w - pad}" y2="${y}" stroke="#00ff88" stroke-width="1" stroke-dasharray="4,3"/>`;
+    svg += `<text x="${pad}" y="${y - 4}" fill="#00ff88" font-size="9">TP ${signalData.take_profit.toFixed(1)}</text>`;
+  }
+
+  svg += '</svg>';
+  return `<div class="bg-bg rounded p-2 overflow-hidden">${svg}</div>`;
 }
 
 // ─── Clock ───

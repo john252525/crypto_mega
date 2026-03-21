@@ -46,6 +46,7 @@ class PaperPosition:
     realized_pnl_pct: float = 0.0
     close_reason: str = ""  # "sl", "tp", "signal", "manual", "timeout"
     signal_strength: float = 0.0
+    signal_metadata: dict = field(default_factory=dict)
 
     @property
     def is_open(self) -> bool:
@@ -190,16 +191,18 @@ class PaperTracker:
         if signal.direction == SignalDirection.HOLD:
             return
 
-        # Log every signal
+        # Log every signal (including metadata for detail view)
         self._signal_log.append({
             "id": signal.id,
             "strategy_id": signal.strategy_id[:8] if signal.strategy_id else "",
+            "strategy_name": self._strategy_names.get(signal.strategy_id, "?"),
             "symbol": signal.symbol,
             "direction": signal.direction.value,
             "strength": round(signal.strength, 3),
             "price": signal.price,
             "stop_loss": signal.stop_loss,
             "take_profit": signal.take_profit,
+            "metadata": signal.metadata or {},
             "timestamp": time.time(),
         })
         # Keep only last 500
@@ -238,6 +241,7 @@ class PaperTracker:
             stop_loss=signal.stop_loss,
             take_profit=signal.take_profit,
             signal_strength=signal.strength,
+            signal_metadata=signal.metadata or {},
         )
         self._positions[pos.id] = pos
         logger.info(
@@ -437,6 +441,8 @@ class PaperTracker:
                 "take_profit": p.take_profit,
                 "strength": p.signal_strength,
                 "opened_at": str(p.opened_at),
+                "signal_id": p.signal_id,
+                "metadata": p.signal_metadata,
             }
             for p in positions
         ]
@@ -463,6 +469,11 @@ class PaperTracker:
                 "close_reason": p.close_reason,
                 "opened_at": str(p.opened_at),
                 "closed_at": str(p.closed_at),
+                "stop_loss": p.stop_loss,
+                "take_profit": p.take_profit,
+                "strength": p.signal_strength,
+                "signal_id": p.signal_id,
+                "metadata": p.signal_metadata,
             }
             for p in positions[-limit:]
         ]

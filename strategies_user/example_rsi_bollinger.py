@@ -63,31 +63,70 @@ class RSIBollinger(BaseStrategy):
 
             last = df.iloc[-1]
 
+            # Recent candles for detail view
+            recent = df.tail(10)
+            candles = [
+                {
+                    "t": str(row.get("timestamp", "")),
+                    "o": round(row["open"], 2),
+                    "h": round(row["high"], 2),
+                    "l": round(row["low"], 2),
+                    "c": round(row["close"], 2),
+                    "v": round(row["volume"], 2) if row.get("volume") else 0,
+                }
+                for _, row in recent.iterrows()
+            ]
+
+            base_meta = {
+                "rsi": round(last["rsi"], 2),
+                "bb_upper": round(last["bb_upper"], 2),
+                "bb_mid": round(last["bb_mid"], 2),
+                "bb_lower": round(last["bb_lower"], 2),
+                "rsi_period": self.rsi_period,
+                "bb_period": self.bb_period,
+                "bb_std": self.bb_std,
+                "candles": candles,
+            }
+
             if last["rsi"] < self.rsi_oversold and last["close"] <= last["bb_lower"]:
+                sl = last["close"] * 0.97
+                tp = last["bb_mid"]
                 signals.append(Signal(
                     symbol=symbol,
                     direction=SignalDirection.LONG,
                     strength=min(1.0, (self.rsi_oversold - last["rsi"]) / 30 + 0.5),
                     price=last["close"],
-                    stop_loss=last["close"] * 0.97,
-                    take_profit=last["bb_mid"],
+                    stop_loss=sl,
+                    take_profit=tp,
                     metadata={
-                        "rsi": round(last["rsi"], 2),
-                        "bb_lower": round(last["bb_lower"], 2),
+                        **base_meta,
+                        "reason": (
+                            f"Mean-reversion BUY: RSI={last['rsi']:.1f} < {self.rsi_oversold} (oversold) "
+                            f"AND price {last['close']:.2f} <= BB lower {last['bb_lower']:.2f}. "
+                            f"BB range: [{last['bb_lower']:.2f} — {last['bb_mid']:.2f} — {last['bb_upper']:.2f}]. "
+                            f"Expecting bounce to BB mid. SL={sl:.2f} (-3%), TP={tp:.2f} (BB mid)."
+                        ),
                     },
                 ))
 
             elif last["rsi"] > self.rsi_overbought and last["close"] >= last["bb_upper"]:
+                sl = last["close"] * 1.03
+                tp = last["bb_mid"]
                 signals.append(Signal(
                     symbol=symbol,
                     direction=SignalDirection.SHORT,
                     strength=min(1.0, (last["rsi"] - self.rsi_overbought) / 30 + 0.5),
                     price=last["close"],
-                    stop_loss=last["close"] * 1.03,
-                    take_profit=last["bb_mid"],
+                    stop_loss=sl,
+                    take_profit=tp,
                     metadata={
-                        "rsi": round(last["rsi"], 2),
-                        "bb_upper": round(last["bb_upper"], 2),
+                        **base_meta,
+                        "reason": (
+                            f"Mean-reversion SELL: RSI={last['rsi']:.1f} > {self.rsi_overbought} (overbought) "
+                            f"AND price {last['close']:.2f} >= BB upper {last['bb_upper']:.2f}. "
+                            f"BB range: [{last['bb_lower']:.2f} — {last['bb_mid']:.2f} — {last['bb_upper']:.2f}]. "
+                            f"Expecting pullback to BB mid. SL={sl:.2f} (+3%), TP={tp:.2f} (BB mid)."
+                        ),
                     },
                 ))
 

@@ -1125,6 +1125,61 @@ async def paper_signals(limit: int = 100):
     return {"signals": paper_tracker.get_signal_log(limit)}
 
 
+@app.get("/paper/signal/{signal_id}")
+async def paper_signal_detail(signal_id: str):
+    """Get full detail for a single signal including metadata & candles."""
+    for s in paper_tracker._signal_log:
+        if s["id"] == signal_id:
+            return s
+    raise HTTPException(404, "Signal not found")
+
+
+@app.get("/paper/position/{position_id}")
+async def paper_position_detail(position_id: str):
+    """Get full detail for a single position including signal metadata."""
+    # Check open positions
+    pos = paper_tracker._positions.get(position_id)
+    if pos:
+        return {
+            "id": pos.id,
+            "signal_id": pos.signal_id,
+            "strategy_id": pos.strategy_id[:8],
+            "strategy_name": pos.strategy_name,
+            "symbol": pos.symbol,
+            "direction": pos.direction.value,
+            "entry_price": pos.entry_price,
+            "current_price": pos.current_price,
+            "unrealized_pnl_pct": round(pos.unrealized_pnl_pct, 2),
+            "stop_loss": pos.stop_loss,
+            "take_profit": pos.take_profit,
+            "strength": pos.signal_strength,
+            "opened_at": str(pos.opened_at),
+            "metadata": pos.signal_metadata,
+        }
+    # Check closed positions
+    for p in paper_tracker._closed:
+        if p.id == position_id:
+            return {
+                "id": p.id,
+                "signal_id": p.signal_id,
+                "strategy_id": p.strategy_id[:8],
+                "strategy_name": p.strategy_name,
+                "symbol": p.symbol,
+                "direction": p.direction.value,
+                "entry_price": p.entry_price,
+                "exit_price": p.exit_price,
+                "realized_pnl_pct": round(p.realized_pnl_pct, 2),
+                "stop_loss": p.stop_loss,
+                "take_profit": p.take_profit,
+                "strength": p.signal_strength,
+                "close_reason": p.close_reason,
+                "opened_at": str(p.opened_at),
+                "closed_at": str(p.closed_at),
+                "metadata": p.signal_metadata,
+            }
+    raise HTTPException(404, "Position not found")
+
+
 @app.get("/paper/stats/{strategy_id}")
 async def paper_stats(strategy_id: str):
     """Detailed paper trading stats for a strategy."""
