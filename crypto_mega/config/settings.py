@@ -44,6 +44,38 @@ class ExchangeConfig:
 
 
 @dataclass
+class ExplorationConfig:
+    """Config for the distributed strategy exploration system."""
+    # How many tasks to keep in the queue at once
+    queue_size: int = int(os.getenv("EXPLORE_QUEUE_SIZE", "100"))
+    # How often to generate new exploration tasks (seconds)
+    generation_interval: float = float(os.getenv("EXPLORE_INTERVAL", "30"))
+    # Max concurrent tasks across all workers
+    max_concurrent: int = int(os.getenv("EXPLORE_MAX_CONCURRENT", "20"))
+    # Minimum trades required to consider a result valid
+    min_trades: int = int(os.getenv("EXPLORE_MIN_TRADES", "5"))
+    # Promotion thresholds
+    promote_min_sharpe: float = float(os.getenv("PROMOTE_MIN_SHARPE", "1.0"))
+    promote_min_win_rate: float = float(os.getenv("PROMOTE_MIN_WIN_RATE", "55"))
+    promote_min_profit_factor: float = float(os.getenv("PROMOTE_MIN_PF", "1.5"))
+    promote_min_trades: int = int(os.getenv("PROMOTE_MIN_TRADES", "20"))
+    # Which exchanges to collect data from (comma-separated)
+    exchanges: list[str] = field(
+        default_factory=lambda: [
+            e.strip() for e in os.getenv("EXPLORE_EXCHANGES", "binance").split(",")
+        ]
+    )
+    # How many top symbols per exchange to collect (by volume)
+    symbols_per_exchange: int = int(os.getenv("EXPLORE_SYMBOLS_PER_EXCHANGE", "50"))
+    # Timeframes to explore
+    timeframes: list[str] = field(
+        default_factory=lambda: [
+            t.strip() for t in os.getenv("EXPLORE_TIMEFRAMES", "5m,15m,1h,4h,1d").split(",")
+        ]
+    )
+
+
+@dataclass
 class ResourceConfig:
     max_workers: int = int(os.getenv("MAX_WORKERS", "4"))
     max_strategies_parallel: int = int(os.getenv("MAX_STRATEGIES", "10"))
@@ -87,6 +119,7 @@ class SystemConfig:
     resources: ResourceConfig = field(default_factory=ResourceConfig)
     risk: RiskConfig = field(default_factory=RiskConfig)
     collector: CollectorConfig = field(default_factory=CollectorConfig)
+    exploration: ExplorationConfig = field(default_factory=ExplorationConfig)
     strategies_dir: Path = Path(os.getenv("STRATEGIES_DIR", "strategies_user"))
     data_dir: Path = Path("data")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")

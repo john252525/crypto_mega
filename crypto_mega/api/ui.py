@@ -87,6 +87,7 @@ tailwind.config = {
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="signals" onclick="switchTab('signals')">Signals</button>
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="positions" onclick="switchTab('positions')">Positions</button>
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="strategies" onclick="switchTab('strategies')">Strategies</button>
+  <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="explore" onclick="switchTab('explore')">Explore</button>
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="data" onclick="switchTab('data')">Data</button>
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="logs" onclick="switchTab('logs')">Logs</button>
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="control" onclick="switchTab('control')">Control</button>
@@ -448,6 +449,105 @@ class MyStrategy(BaseStrategy):
     </div>
   </div>
 
+  <!-- ═══ EXPLORATION TAB ═══ -->
+  <div id="tab-explore" class="hidden fade-in space-y-6">
+
+    <!-- Explorer Status Cards -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3">
+      <div class="bg-card border border-border rounded-lg p-3 text-center">
+        <div class="text-gray-500 text-xs mb-1">Explorer</div>
+        <div id="explore-status" class="text-2xl font-bold text-gray-600">—</div>
+        <div id="explore-status-detail" class="text-xs text-gray-600 mt-1">—</div>
+      </div>
+      <div class="bg-card border border-border rounded-lg p-3 text-center">
+        <div class="text-gray-500 text-xs mb-1">Total Results</div>
+        <div id="explore-total-results" class="text-2xl font-bold">0</div>
+      </div>
+      <div class="bg-card border border-border rounded-lg p-3 text-center">
+        <div class="text-gray-500 text-xs mb-1">Symbols Tested</div>
+        <div id="explore-unique-symbols" class="text-2xl font-bold">0</div>
+      </div>
+      <div class="bg-card border border-border rounded-lg p-3 text-center">
+        <div class="text-gray-500 text-xs mb-1">Strategies Tested</div>
+        <div id="explore-unique-strategies" class="text-2xl font-bold">0</div>
+      </div>
+      <div class="bg-card border border-border rounded-lg p-3 text-center">
+        <div class="text-gray-500 text-xs mb-1">Workers Online</div>
+        <div id="explore-workers" class="text-2xl font-bold">0</div>
+      </div>
+      <div class="bg-card border border-border rounded-lg p-3 text-center">
+        <div class="text-gray-500 text-xs mb-1">Promoted</div>
+        <div id="explore-promoted" class="text-2xl font-bold text-accent">0</div>
+      </div>
+    </div>
+
+    <!-- Task pipeline -->
+    <div class="bg-card border border-border rounded-lg p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-bold">Task Pipeline</h3>
+        <div class="flex gap-2">
+          <button onclick="explorerAction('start')" class="px-3 py-1 bg-accent/10 text-accent rounded text-xs hover:bg-accent/20">Start Explorer</button>
+          <button onclick="explorerAction('stop')" class="px-3 py-1 bg-warn/10 text-warn rounded text-xs hover:bg-warn/20">Stop</button>
+          <button onclick="explorerAction('generate')" class="px-3 py-1 bg-blue/10 text-blue rounded text-xs hover:bg-blue/20">Generate 50 Tasks</button>
+          <button onclick="explorerAction('refresh-symbols')" class="px-3 py-1 bg-gray-500/10 text-gray-400 rounded text-xs hover:bg-gray-500/20">Refresh Symbols</button>
+        </div>
+      </div>
+      <div class="grid grid-cols-4 gap-3 text-center">
+        <div class="bg-bg rounded p-2"><div class="text-xs text-gray-500">Pending</div><div id="explore-pending" class="text-lg font-bold">0</div></div>
+        <div class="bg-bg rounded p-2"><div class="text-xs text-gray-500">Running</div><div id="explore-running" class="text-lg font-bold text-blue">0</div></div>
+        <div class="bg-bg rounded p-2"><div class="text-xs text-gray-500">Done</div><div id="explore-done" class="text-lg font-bold text-accent">0</div></div>
+        <div class="bg-bg rounded p-2"><div class="text-xs text-gray-500">Failed</div><div id="explore-failed" class="text-lg font-bold text-danger">0</div></div>
+      </div>
+    </div>
+
+    <!-- Exploration Leaderboard -->
+    <div class="bg-card border border-border rounded-lg p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-bold">Exploration Leaderboard — Best Discoveries</h3>
+        <div class="flex gap-2 items-center">
+          <select id="explore-sort" onchange="loadExploreLeaderboard()" class="bg-bg border border-border rounded px-2 py-1 text-xs">
+            <option value="sharpe_ratio">Sharpe Ratio</option>
+            <option value="total_pnl_pct">P&L %</option>
+            <option value="win_rate">Win Rate</option>
+            <option value="profit_factor">Profit Factor</option>
+          </select>
+          <button onclick="loadExploreLeaderboard()" class="px-3 py-1 bg-blue/10 text-blue rounded text-xs hover:bg-blue/20">Refresh</button>
+        </div>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-gray-500 border-b border-border">
+              <th class="text-left py-2 px-2">#</th>
+              <th class="text-left py-2 px-2">Strategy</th>
+              <th class="text-left py-2 px-2">Symbol</th>
+              <th class="text-left py-2 px-2">TF</th>
+              <th class="text-right py-2 px-2">Sharpe</th>
+              <th class="text-right py-2 px-2">P&L %</th>
+              <th class="text-right py-2 px-2">Win Rate</th>
+              <th class="text-right py-2 px-2">PF</th>
+              <th class="text-right py-2 px-2">Trades</th>
+              <th class="text-right py-2 px-2">Max DD</th>
+              <th class="text-left py-2 px-2">Params</th>
+              <th class="text-center py-2 px-2">Status</th>
+            </tr>
+          </thead>
+          <tbody id="explore-lb-body"></tbody>
+        </table>
+      </div>
+      <div id="explore-lb-empty" class="text-center text-gray-600 text-xs py-6">No exploration results yet. Start the explorer to begin discovering alpha.</div>
+    </div>
+
+    <!-- Available Symbols -->
+    <div class="bg-card border border-border rounded-lg p-4">
+      <div class="flex items-center justify-between mb-3">
+        <h3 class="text-sm font-bold">Available Symbols by Exchange</h3>
+      </div>
+      <div id="explore-symbols-list" class="text-xs text-gray-400">No symbols discovered yet</div>
+    </div>
+
+  </div>
+
   <!-- ═══ DATA INTEGRITY TAB ═══ -->
   <div id="tab-data" class="hidden fade-in space-y-6">
 
@@ -554,6 +654,7 @@ function refreshTab() {
   if (currentTab === 'signals') loadSignalFeed();
   if (currentTab === 'logs') filterLogs();
   if (currentTab === 'data') loadDataSummary();
+  if (currentTab === 'explore') loadExploreTab();
 }
 
 // ─── Dashboard ───
@@ -1250,6 +1351,106 @@ function fmtDatetime(iso) {
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
     d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
 }
+
+// ─── Exploration Tab ───
+async function loadExploreTab() {
+  const [stats, lb, symbols] = await Promise.all([
+    api('/explore/stats'),
+    api('/explore/leaderboard?limit=50'),
+    api('/explore/symbols'),
+  ]);
+
+  // Status cards
+  const statusEl = document.getElementById('explore-status');
+  const detailEl = document.getElementById('explore-status-detail');
+  if (stats.running) {
+    statusEl.textContent = 'running';
+    statusEl.className = 'text-2xl font-bold text-accent';
+    const avail = stats.available_symbols || {};
+    const totalSyms = Object.values(avail).reduce((a,b) => a+b, 0);
+    detailEl.textContent = `${Object.keys(avail).length} exchanges · ${totalSyms} symbols`;
+  } else {
+    statusEl.textContent = stats.message ? 'stopped' : 'stopped';
+    statusEl.className = 'text-2xl font-bold text-warn';
+    detailEl.textContent = stats.message || 'Set AUTO_START_EXPLORER=true';
+  }
+
+  document.getElementById('explore-total-results').textContent = (stats.total_results || 0).toLocaleString();
+  document.getElementById('explore-unique-symbols').textContent = stats.unique_symbols || 0;
+  document.getElementById('explore-unique-strategies').textContent = stats.unique_strategies || 0;
+  document.getElementById('explore-workers').textContent = stats.workers_online || 0;
+  document.getElementById('explore-promoted').textContent = stats.total_promoted || 0;
+
+  // Pipeline
+  document.getElementById('explore-pending').textContent = stats.tasks_pending || 0;
+  document.getElementById('explore-running').textContent = stats.tasks_running || 0;
+  document.getElementById('explore-done').textContent = (stats.tasks_done || 0).toLocaleString();
+  document.getElementById('explore-failed').textContent = stats.tasks_failed || 0;
+
+  // Leaderboard
+  renderExploreLeaderboard(lb);
+
+  // Symbols
+  if (symbols.symbols && Object.keys(symbols.symbols).length > 0) {
+    let html = '';
+    for (const [ex, syms] of Object.entries(symbols.symbols)) {
+      html += `<div class="mb-2"><span class="text-accent font-bold">${ex}</span> <span class="text-gray-600">(${syms.length} symbols)</span><br/><span class="text-gray-500">${syms.slice(0, 30).join(', ')}${syms.length > 30 ? ` ... +${syms.length-30} more` : ''}</span></div>`;
+    }
+    document.getElementById('explore-symbols-list').innerHTML = html;
+  }
+}
+
+async function loadExploreLeaderboard() {
+  const sort = document.getElementById('explore-sort').value;
+  const data = await api(`/explore/leaderboard?sort_by=${sort}&limit=50`);
+  renderExploreLeaderboard(data);
+}
+
+function renderExploreLeaderboard(data) {
+  const body = document.getElementById('explore-lb-body');
+  const empty = document.getElementById('explore-lb-empty');
+  if (!data.leaderboard || data.leaderboard.length === 0) {
+    body.innerHTML = '';
+    empty.classList.remove('hidden');
+    return;
+  }
+  empty.classList.add('hidden');
+  body.innerHTML = data.leaderboard.map((r, i) => {
+    const pnlCls = r.pnl_pct >= 0 ? 'text-profit' : 'text-loss';
+    const sharpeCls = r.sharpe >= 1 ? 'text-profit' : r.sharpe >= 0 ? 'text-gray-400' : 'text-loss';
+    const paramStr = Object.entries(r.params || {}).map(([k,v]) => `${k}=${v}`).join(', ');
+    const badge = r.promoted ? '<span class="bg-accent/20 text-accent px-1 rounded">PROMOTED</span>' : '<span class="text-gray-600">tested</span>';
+    return `<tr class="border-b border-border/50 hover:bg-border/20">
+      <td class="py-2 px-2 text-gray-500">${i+1}</td>
+      <td class="py-2 px-2 font-bold">${r.strategy}</td>
+      <td class="py-2 px-2 text-accent">${r.symbol}</td>
+      <td class="py-2 px-2">${r.timeframe}</td>
+      <td class="py-2 px-2 text-right ${sharpeCls} font-mono">${r.sharpe.toFixed(2)}</td>
+      <td class="py-2 px-2 text-right ${pnlCls} font-mono">${r.pnl_pct >= 0 ? '+' : ''}${r.pnl_pct.toFixed(1)}%</td>
+      <td class="py-2 px-2 text-right">${r.win_rate.toFixed(0)}%</td>
+      <td class="py-2 px-2 text-right">${r.profit_factor.toFixed(2)}</td>
+      <td class="py-2 px-2 text-right">${r.trades}</td>
+      <td class="py-2 px-2 text-right text-warn">${r.max_dd.toFixed(1)}%</td>
+      <td class="py-2 px-2 text-gray-500 max-w-[200px] truncate" title="${paramStr}">${paramStr || '—'}</td>
+      <td class="py-2 px-2 text-center">${badge}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function explorerAction(action) {
+  const opts = { method: 'POST' };
+  if (action === 'start') {
+    await api('/explore/start', opts);
+  } else if (action === 'stop') {
+    await api('/explore/stop', opts);
+  } else if (action === 'generate') {
+    await api('/explore/generate?count=50', opts);
+  } else if (action === 'refresh-symbols') {
+    await api('/explore/refresh-symbols', opts);
+  }
+  setTimeout(() => loadExploreTab(), 500);
+}
+
 
 async function loadDataSummary() {
   const [res, collectorRes] = await Promise.all([

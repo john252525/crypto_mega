@@ -124,6 +124,73 @@ class BacktestResultRecord(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class ExplorationTaskRecord(Base):
+    """A single exploration task: test strategy X with params Y on symbol Z."""
+    __tablename__ = "exploration_tasks"
+    __table_args__ = (
+        Index("ix_explore_status", "status"),
+        Index("ix_explore_strategy", "strategy_name"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    strategy_name: Mapped[str] = mapped_column(String(255))
+    symbol: Mapped[str] = mapped_column(String(30))
+    timeframe: Mapped[str] = mapped_column(String(5))
+    exchange_id: Mapped[str] = mapped_column(String(30), default="binance")
+    parameters: Mapped[str] = mapped_column(Text, default="{}")  # JSON
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, running, done, failed
+    worker_id: Mapped[str] = mapped_column(String(50), default="")
+    celery_task_id: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+    started_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=True)
+    finished_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=True)
+
+
+class ExplorationResultRecord(Base):
+    """Result of an exploration task — stored permanently for analysis."""
+    __tablename__ = "exploration_results"
+    __table_args__ = (
+        Index("ix_explres_strategy", "strategy_name"),
+        Index("ix_explres_pnl", "total_pnl_pct"),
+        Index("ix_explres_sharpe", "sharpe_ratio"),
+        Index("ix_explres_symbol", "symbol"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_id: Mapped[str] = mapped_column(String(36), index=True)
+    strategy_name: Mapped[str] = mapped_column(String(255))
+    symbol: Mapped[str] = mapped_column(String(30))
+    timeframe: Mapped[str] = mapped_column(String(5))
+    exchange_id: Mapped[str] = mapped_column(String(30), default="binance")
+    parameters: Mapped[str] = mapped_column(Text, default="{}")
+    total_trades: Mapped[int] = mapped_column(Integer, default=0)
+    total_pnl: Mapped[float] = mapped_column(Float, default=0.0)
+    total_pnl_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    max_drawdown: Mapped[float] = mapped_column(Float, default=0.0)
+    sharpe_ratio: Mapped[float] = mapped_column(Float, default=0.0)
+    win_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    profit_factor: Mapped[float] = mapped_column(Float, default=0.0)
+    avg_trade_pnl_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    run_time_sec: Mapped[float] = mapped_column(Float, default=0.0)
+    promoted: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class WorkerNodeRecord(Base):
+    """Registered compute worker node."""
+    __tablename__ = "worker_nodes"
+
+    id: Mapped[str] = mapped_column(String(50), primary_key=True)  # hostname or UUID
+    hostname: Mapped[str] = mapped_column(String(255), default="")
+    ip_address: Mapped[str] = mapped_column(String(45), default="")
+    max_workers: Mapped[int] = mapped_column(Integer, default=4)
+    current_tasks: Mapped[int] = mapped_column(Integer, default=0)
+    total_completed: Mapped[int] = mapped_column(Integer, default=0)
+    status: Mapped[str] = mapped_column(String(20), default="online")  # online, offline, draining
+    last_heartbeat: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+    registered_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+
+
 async def init_db(database_url: str, connect_timeout: int = 10) -> async_sessionmaker:
     """Initialize database and create tables."""
     # asyncpg uses 'command_timeout'; aiosqlite uses 'timeout'

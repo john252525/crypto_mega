@@ -112,6 +112,8 @@ backtester = Backtester()
 db_session = None
 _engine_task = None  # background task for signal engine loop
 _candle_collector = None  # background CandleCollector instance
+_strategy_explorer = None  # background StrategyExplorer instance
+_explorer_task = None  # background task for explorer loop
 _shutdown_event = asyncio.Event()  # Signal graceful shutdown
 _last_health_check = time.time()
 _health_check_interval = 60  # Log health every 60 seconds
@@ -184,15 +186,23 @@ async def lifespan(app: FastAPI):
     # Auto-start candle collector (writes candles to DB continuously)
     collector_task = asyncio.create_task(_auto_start_collector())
 
+    # Auto-start strategy explorer if enabled
+    auto_explore = os.getenv("AUTO_START_EXPLORER", "false").lower() == "true"
+    explorer_task_bg = None
+    if auto_explore:
+        explorer_task_bg = asyncio.create_task(_auto_start_explorer())
+
     yield
 
-    # Stop collector
-    global _candle_collector
+    # Stop collector & explorer
+    global _candle_collector, _strategy_explorer
     if _candle_collector:
         _candle_collector.stop()
+    if _strategy_explorer:
+        _strategy_explorer.stop()
 
     # Stop background tasks
-    for task in [health_task, auto_task, db_retry_task, collector_task]:
+    for task in [health_task, auto_task, db_retry_task, collector_task, explorer_task_bg]:
         if task and not task.done():
             task.cancel()
             try:
@@ -288,6 +298,33 @@ async def _auto_start_collector():
         f"interval={config.collector.interval_sec}s"
     )
     await _candle_collector.run_loop()
+
+
+async def _auto_start_explorer():
+    """Start StrategyExplorer as a background task once DB is ready."""
+    global _strategy_explorer
+    from crypto_mega.engine.explorer import StrategyExplorer
+
+    # Wait for DB
+    for _ in range(120):
+        if db_session is not None:
+            break
+        await asyncio.sleep(1)
+    else:
+        logger.warning("StrategyExplorer: DB not available, will not start")
+        return
+
+    _strategy_explorer = StrategyExplorer(
+        session_factory=db_session,
+        config=config.exploration,
+    )
+    logger.info(
+        f"StrategyExplorer auto-started | "
+        f"exchanges={config.exploration.exchanges} | "
+        f"symbols_per_exchange={config.exploration.symbols_per_exchange} | "
+        f"queue_size={config.exploration.queue_size}"
+    )
+    await _strategy_explorer.run_loop()
 
 
 async def periodic_health_check():
@@ -1403,6 +1440,181 @@ async def candles_check_gaps(symbol: str = "", timeframe: str = ""):
             })
 
     return {"results": results}
+
+
+# ─── Batch Candle API ───
+
+@app.get("/data/candles/batch")
+async def candles_batch(
+    symbols: str = "",
+    timeframes: str = "",
+    limit: int = 200,
+):
+    """Fetch candles for multiple symbols/timeframes in one request.
+
+    Query params:
+        symbols: comma-separated, e.g. "BTC/USDT,ETH/USDT"
+        timeframes: comma-separated, e.g. "1h,4h"
+        limit: candles per series (default 200)
+    """
+    if not db_session:
+        raise HTTPException(503, "Database not connected")
+    if not symbols or not timeframes:
+        raise HTTPException(400, "symbols and timeframes are required")
+
+    from crypto_mega.data.store import CandleStore
+    store = CandleStore(db_session)
+    sym_list = [s.strip() for s in symbols.split(",") if s.strip()]
+    tf_list = [t.strip() for t in timeframes.split(",") if t.strip()]
+
+    data = await store.fetch_multi(sym_list, tf_list, limit=limit)
+
+    result = {}
+    for key, df in data.items():
+        result[key] = {
+            "candles": len(df),
+            "data": df.to_dict(orient="list"),
+        }
+
+    return {"series": result, "symbols": sym_list, "timeframes": tf_list}
+
+
+# ─── Exploration System ───
+
+@app.get("/explore/stats")
+async def explore_stats():
+    """Get exploration system statistics."""
+    if _strategy_explorer is None:
+        return {
+            "running": False,
+            "message": "Explorer not started. Set AUTO_START_EXPLORER=true or call POST /explore/start",
+        }
+    return await _strategy_explorer.get_stats()
+
+
+@app.get("/explore/leaderboard")
+async def explore_leaderboard(
+    limit: int = 50,
+    sort_by: str = "sharpe_ratio",
+    min_trades: int = 5,
+):
+    """Get exploration results leaderboard."""
+    if not db_session:
+        raise HTTPException(503, "Database not connected")
+
+    from crypto_mega.engine.explorer import StrategyExplorer
+    explorer = _strategy_explorer or StrategyExplorer(db_session, config.exploration)
+    return {
+        "leaderboard": await explorer.get_leaderboard(limit, sort_by, min_trades),
+    }
+
+
+@app.post("/explore/start")
+async def explore_start():
+    """Start the strategy explorer."""
+    global _strategy_explorer, _explorer_task
+    if _strategy_explorer and _strategy_explorer._running:
+        return {"status": "already running"}
+    if not db_session:
+        raise HTTPException(503, "Database not connected")
+
+    from crypto_mega.engine.explorer import StrategyExplorer
+    _strategy_explorer = StrategyExplorer(db_session, config.exploration)
+    _explorer_task = asyncio.create_task(_strategy_explorer.run_loop())
+    return {"status": "started"}
+
+
+@app.post("/explore/stop")
+async def explore_stop():
+    """Stop the strategy explorer."""
+    if _strategy_explorer:
+        _strategy_explorer.stop()
+        return {"status": "stopped"}
+    return {"status": "not running"}
+
+
+@app.post("/explore/generate")
+async def explore_generate(count: int = 10):
+    """Manually generate exploration tasks."""
+    if not db_session:
+        raise HTTPException(503, "Database not connected")
+
+    from crypto_mega.engine.explorer import StrategyExplorer
+    explorer = _strategy_explorer or StrategyExplorer(db_session, config.exploration)
+    if not explorer._available_symbols:
+        await explorer.refresh_symbols()
+    generated = await explorer.generate_batch(count)
+    return {"generated": generated}
+
+
+@app.get("/explore/promotions")
+async def explore_promotions():
+    """Get exploration results that qualify for promotion to paper trading."""
+    if not db_session:
+        raise HTTPException(503, "Database not connected")
+    from crypto_mega.engine.explorer import StrategyExplorer
+    explorer = _strategy_explorer or StrategyExplorer(db_session, config.exploration)
+    promoted = await explorer.check_promotions()
+    return {"promoted": promoted, "count": len(promoted)}
+
+
+@app.get("/explore/symbols")
+async def explore_symbols():
+    """Get currently discovered symbols per exchange."""
+    if _strategy_explorer:
+        return {
+            "symbols": {
+                ex: syms for ex, syms in _strategy_explorer._available_symbols.items()
+            },
+        }
+    return {"symbols": {}, "message": "Explorer not started"}
+
+
+@app.post("/explore/refresh-symbols")
+async def explore_refresh_symbols():
+    """Manually refresh available symbols from exchanges."""
+    if not _strategy_explorer:
+        raise HTTPException(400, "Explorer not started")
+    await _strategy_explorer.refresh_symbols()
+    return {
+        "symbols": {
+            ex: len(syms)
+            for ex, syms in _strategy_explorer._available_symbols.items()
+        },
+    }
+
+
+@app.get("/workers")
+async def list_workers():
+    """Get registered worker nodes."""
+    if not db_session:
+        raise HTTPException(503, "Database not connected")
+
+    from sqlalchemy import select
+    from crypto_mega.data.models import WorkerNodeRecord
+    async with db_session() as session:
+        result = await session.execute(
+            select(WorkerNodeRecord).order_by(WorkerNodeRecord.last_heartbeat.desc())
+        )
+        workers = result.scalars().all()
+
+    return {
+        "workers": [
+            {
+                "id": w.id,
+                "hostname": w.hostname,
+                "ip": w.ip_address,
+                "max_workers": w.max_workers,
+                "current_tasks": w.current_tasks,
+                "total_completed": w.total_completed,
+                "status": w.status,
+                "last_heartbeat": w.last_heartbeat.isoformat() if w.last_heartbeat else None,
+            }
+            for w in workers
+        ],
+        "online": sum(1 for w in workers if w.status == "online"),
+        "total_capacity": sum(w.max_workers for w in workers if w.status == "online"),
+    }
 
 
 @app.get("/system/alerts")
