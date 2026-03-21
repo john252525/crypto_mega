@@ -111,6 +111,7 @@ paper_tracker = PaperTracker()
 backtester = Backtester()
 db_session = None
 _engine_task = None  # background task for signal engine loop
+_candle_collector = None  # background CandleCollector instance
 _shutdown_event = asyncio.Event()  # Signal graceful shutdown
 _last_health_check = time.time()
 _health_check_interval = 60  # Log health every 60 seconds
@@ -180,10 +181,18 @@ async def lifespan(app: FastAPI):
     else:
         auto_task = None
 
+    # Auto-start candle collector (writes candles to DB continuously)
+    collector_task = asyncio.create_task(_auto_start_collector())
+
     yield
 
+    # Stop collector
+    global _candle_collector
+    if _candle_collector:
+        _candle_collector.stop()
+
     # Stop background tasks
-    for task in [health_task, auto_task, db_retry_task]:
+    for task in [health_task, auto_task, db_retry_task, collector_task]:
         if task and not task.done():
             task.cancel()
             try:
@@ -237,6 +246,48 @@ async def _connect_db_with_retry():
         f"Check DATABASE_URL in Railway variables."
     )
     logger.error("Database connection failed permanently — app running without persistence")
+
+
+async def _auto_start_collector():
+    """Start CandleCollector as a background task once DB and exchange are ready."""
+    global _candle_collector
+    from crypto_mega.data.collector import CandleCollector
+
+    # Wait for DB to be ready (up to 120s)
+    for _ in range(120):
+        if db_session is not None:
+            break
+        await asyncio.sleep(1)
+    else:
+        logger.warning("CandleCollector: DB not available, collector will not start")
+        return
+
+    # Wait for exchange to be ready (up to 120s)
+    for _ in range(120):
+        if data_provider._exchange is not None:
+            break
+        await asyncio.sleep(1)
+    else:
+        logger.warning("CandleCollector: exchange not connected, collector will not start")
+        return
+
+    _candle_collector = CandleCollector(
+        session_factory=db_session,
+        data_provider=data_provider,
+        symbols=config.collector.symbols,
+        timeframes=config.collector.timeframes,
+        collect_interval=config.collector.interval_sec,
+        candle_limit=config.collector.candle_limit,
+        retention_days=config.collector.retention_days,
+    )
+
+    logger.info(
+        f"CandleCollector auto-started | "
+        f"symbols={config.collector.symbols} | "
+        f"timeframes={config.collector.timeframes} | "
+        f"interval={config.collector.interval_sec}s"
+    )
+    await _candle_collector.run_loop()
 
 
 async def periodic_health_check():
@@ -1169,6 +1220,14 @@ async def connect_exchange(req: ExchangeConnectRequest):
 
 
 # ─── Logs ───
+
+@app.get("/data/collector/status")
+async def collector_status():
+    """Status of the background CandleCollector."""
+    if _candle_collector is None:
+        return {"running": False, "message": "Collector not started yet (waiting for DB + exchange)"}
+    return _candle_collector.get_stats()
+
 
 @app.get("/data/health")
 async def data_health():

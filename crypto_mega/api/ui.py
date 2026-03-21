@@ -452,7 +452,7 @@ class MyStrategy(BaseStrategy):
   <div id="tab-data" class="hidden fade-in space-y-6">
 
     <!-- Summary cards -->
-    <div class="grid grid-cols-4 gap-4">
+    <div class="grid grid-cols-5 gap-4">
       <div class="bg-card border border-border rounded-lg p-4">
         <div class="text-xs text-gray-500 mb-1">Total Candles</div>
         <div class="text-2xl font-bold text-accent" id="data-total-candles">—</div>
@@ -468,6 +468,11 @@ class MyStrategy(BaseStrategy):
       <div class="bg-card border border-border rounded-lg p-4">
         <div class="text-xs text-gray-500 mb-1">DB Status</div>
         <div class="text-2xl font-bold" id="data-db-status">—</div>
+      </div>
+      <div class="bg-card border border-border rounded-lg p-4">
+        <div class="text-xs text-gray-500 mb-1">Collector</div>
+        <div class="text-2xl font-bold" id="data-collector-status">—</div>
+        <div class="text-xs text-gray-600 mt-1" id="data-collector-detail"></div>
       </div>
     </div>
 
@@ -1245,7 +1250,25 @@ function fmtDatetime(iso) {
 }
 
 async function loadDataSummary() {
-  const res = await api('/data/candles/summary');
+  const [res, collectorRes] = await Promise.all([
+    api('/data/candles/summary'),
+    api('/data/collector/status'),
+  ]);
+
+  // Collector status card
+  const cEl = document.getElementById('data-collector-status');
+  const cDetail = document.getElementById('data-collector-detail');
+  if (collectorRes && collectorRes.running) {
+    cEl.textContent = 'running';
+    cEl.className = 'text-2xl font-bold text-accent';
+    const pairCount = Object.keys(collectorRes.pairs || {}).length;
+    cDetail.textContent = `${pairCount} pairs · ${collectorRes.interval_sec}s interval`;
+  } else {
+    cEl.textContent = 'stopped';
+    cEl.className = 'text-2xl font-bold text-warn';
+    cDetail.textContent = collectorRes.message || 'waiting...';
+  }
+
   if (res.error) {
     document.getElementById('data-db-status').textContent = 'offline';
     document.getElementById('data-db-status').className = 'text-2xl font-bold text-danger';
