@@ -492,7 +492,8 @@ class MyStrategy(BaseStrategy):
               <th class="text-left py-2 px-2">From</th>
               <th class="text-left py-2 px-2">To</th>
               <th class="text-left py-2 px-2">Days</th>
-              <th class="text-left py-2 px-2">Last Collected</th>
+              <th class="text-left py-2 px-2">Last Updated</th>
+              <th class="text-left py-2 px-2">Fetch Interval</th>
             </tr>
           </thead>
           <tbody id="data-series-table"></tbody>
@@ -1258,11 +1259,12 @@ async function loadDataSummary() {
   // Collector status card
   const cEl = document.getElementById('data-collector-status');
   const cDetail = document.getElementById('data-collector-detail');
+  const collectorPairs = (collectorRes && collectorRes.pairs) || {};
   if (collectorRes && collectorRes.running) {
     cEl.textContent = 'running';
     cEl.className = 'text-2xl font-bold text-accent';
-    const pairCount = Object.keys(collectorRes.pairs || {}).length;
-    cDetail.textContent = `${pairCount} pairs · ${collectorRes.interval_sec}s interval`;
+    const pairCount = Object.keys(collectorPairs).length;
+    cDetail.textContent = `${pairCount} pairs · smart intervals`;
   } else {
     cEl.textContent = 'stopped';
     cEl.className = 'text-2xl font-bold text-warn';
@@ -1308,10 +1310,26 @@ async function loadDataSummary() {
   }
   document.getElementById('data-series-empty').classList.add('hidden');
 
+  // Build lookup for collector intervals
+  const TF_INTERVALS = {'1m':15,'3m':45,'5m':60,'15m':300,'30m':600,'1h':900,'2h':1800,'4h':3600,'6h':3600,'8h':3600,'12h':3600,'1d':3600,'3d':7200,'1w':14400};
+
   tbody.innerHTML = res.series.map(s => {
     const days = s.first_timestamp_ms && s.last_timestamp_ms
       ? ((s.last_timestamp_ms - s.first_timestamp_ms) / 86400000).toFixed(1)
       : '—';
+    // Collector interval for this timeframe
+    const intSec = TF_INTERVALS[s.timeframe] || 60;
+    const intLabel = intSec >= 3600 ? (intSec/3600)+'h' : intSec >= 60 ? (intSec/60)+'m' : intSec+'s';
+    // Show relative time for last_collected
+    let updatedStr = '—';
+    let updatedClass = 'text-gray-500';
+    if (s.last_collected) {
+      const ago = (Date.now() - new Date(s.last_collected).getTime()) / 1000;
+      if (ago < 60) { updatedStr = Math.round(ago) + 's ago'; updatedClass = 'text-accent'; }
+      else if (ago < 3600) { updatedStr = Math.round(ago/60) + 'm ago'; updatedClass = ago < intSec * 3 ? 'text-accent' : 'text-warn'; }
+      else if (ago < 86400) { updatedStr = Math.round(ago/3600) + 'h ago'; updatedClass = ago < intSec * 3 ? 'text-gray-400' : 'text-warn'; }
+      else { updatedStr = Math.round(ago/86400) + 'd ago'; updatedClass = 'text-danger'; }
+    }
     return `<tr class="border-b border-border/50 hover:bg-border/20">
       <td class="py-2 px-2 font-bold text-accent">${s.symbol}</td>
       <td class="py-2 px-2">${s.timeframe}</td>
@@ -1319,7 +1337,8 @@ async function loadDataSummary() {
       <td class="py-2 px-2 text-gray-400">${fmtMs(s.first_timestamp_ms)}</td>
       <td class="py-2 px-2 text-gray-400">${fmtMs(s.last_timestamp_ms)}</td>
       <td class="py-2 px-2 text-gray-400">${days}</td>
-      <td class="py-2 px-2 text-gray-500">${fmtDatetime(s.last_collected)}</td>
+      <td class="py-2 px-2 ${updatedClass}" title="${fmtDatetime(s.last_collected)}">${updatedStr}</td>
+      <td class="py-2 px-2 text-gray-600">${intLabel}</td>
     </tr>`;
   }).join('');
 }
