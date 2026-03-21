@@ -87,6 +87,7 @@ tailwind.config = {
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="signals" onclick="switchTab('signals')">Signals</button>
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="positions" onclick="switchTab('positions')">Positions</button>
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="strategies" onclick="switchTab('strategies')">Strategies</button>
+  <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="data" onclick="switchTab('data')">Data</button>
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="logs" onclick="switchTab('logs')">Logs</button>
   <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="control" onclick="switchTab('control')">Control</button>
 </nav>
@@ -447,6 +448,73 @@ class MyStrategy(BaseStrategy):
     </div>
   </div>
 
+  <!-- ═══ DATA INTEGRITY TAB ═══ -->
+  <div id="tab-data" class="hidden fade-in space-y-6">
+
+    <!-- Summary cards -->
+    <div class="grid grid-cols-4 gap-4">
+      <div class="bg-card border border-border rounded-lg p-4">
+        <div class="text-xs text-gray-500 mb-1">Total Candles</div>
+        <div class="text-2xl font-bold text-accent" id="data-total-candles">—</div>
+      </div>
+      <div class="bg-card border border-border rounded-lg p-4">
+        <div class="text-xs text-gray-500 mb-1">Symbols</div>
+        <div class="text-2xl font-bold text-blue" id="data-total-symbols">—</div>
+      </div>
+      <div class="bg-card border border-border rounded-lg p-4">
+        <div class="text-xs text-gray-500 mb-1">Timeframes</div>
+        <div class="text-2xl font-bold text-blue" id="data-total-tf">—</div>
+      </div>
+      <div class="bg-card border border-border rounded-lg p-4">
+        <div class="text-xs text-gray-500 mb-1">DB Status</div>
+        <div class="text-2xl font-bold" id="data-db-status">—</div>
+      </div>
+    </div>
+
+    <!-- Series overview table -->
+    <div class="bg-card border border-border rounded-lg p-4">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-bold">Candle Series Overview</h3>
+        <button onclick="loadDataSummary()" class="px-3 py-1 bg-accent/10 text-accent rounded text-xs hover:bg-accent/20">Refresh</button>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="w-full text-xs">
+          <thead>
+            <tr class="text-gray-500 border-b border-border">
+              <th class="text-left py-2 px-2">Symbol</th>
+              <th class="text-left py-2 px-2">TF</th>
+              <th class="text-right py-2 px-2">Candles</th>
+              <th class="text-left py-2 px-2">From</th>
+              <th class="text-left py-2 px-2">To</th>
+              <th class="text-left py-2 px-2">Days</th>
+              <th class="text-left py-2 px-2">Last Collected</th>
+            </tr>
+          </thead>
+          <tbody id="data-series-table"></tbody>
+        </table>
+      </div>
+      <div id="data-series-empty" class="hidden text-center text-gray-600 text-xs py-8">No candle data in database yet</div>
+    </div>
+
+    <!-- Gap checker -->
+    <div class="bg-card border border-border rounded-lg p-4">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="text-sm font-bold">Integrity Check — Gap Detection</h3>
+        <div class="flex gap-2 items-center">
+          <select id="gap-symbol" class="bg-bg border border-border rounded px-2 py-1 text-xs">
+            <option value="">All symbols</option>
+          </select>
+          <select id="gap-tf" class="bg-bg border border-border rounded px-2 py-1 text-xs">
+            <option value="">All timeframes</option>
+          </select>
+          <button onclick="runGapCheck()" id="gap-check-btn" class="px-3 py-1 bg-blue/10 text-blue rounded text-xs hover:bg-blue/20">Run Check</button>
+        </div>
+      </div>
+      <div id="gap-results" class="space-y-3"></div>
+      <div id="gap-empty" class="text-center text-gray-600 text-xs py-6">Select filters and click "Run Check" to analyze candle continuity</div>
+    </div>
+  </div>
+
 </main>
 
 <script>
@@ -478,6 +546,7 @@ function refreshTab() {
   if (currentTab === 'strategies') loadStrategies();
   if (currentTab === 'signals') loadSignalFeed();
   if (currentTab === 'logs') filterLogs();
+  if (currentTab === 'data') loadDataSummary();
 }
 
 // ─── Dashboard ───
@@ -1158,6 +1227,183 @@ function clearLogs() {
 
 function escapeHtml(str) {
   return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// ─── Data Integrity ───
+let _dataSummaryCache = null;
+
+function fmtMs(ms) {
+  if (!ms) return '—';
+  return new Date(ms).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+function fmtDatetime(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) + ' ' +
+    d.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+}
+
+async function loadDataSummary() {
+  const res = await api('/data/candles/summary');
+  if (res.error) {
+    document.getElementById('data-db-status').textContent = 'offline';
+    document.getElementById('data-db-status').className = 'text-2xl font-bold text-danger';
+    document.getElementById('data-series-empty').classList.remove('hidden');
+    document.getElementById('data-series-table').innerHTML = '';
+    return;
+  }
+
+  _dataSummaryCache = res;
+
+  document.getElementById('data-total-candles').textContent = (res.total_candles || 0).toLocaleString();
+  document.getElementById('data-total-symbols').textContent = (res.symbols || []).length;
+  document.getElementById('data-total-tf').textContent = (res.timeframes || []).length;
+  document.getElementById('data-db-status').textContent = 'online';
+  document.getElementById('data-db-status').className = 'text-2xl font-bold text-accent';
+
+  // Populate filter dropdowns
+  const symSelect = document.getElementById('gap-symbol');
+  const tfSelect = document.getElementById('gap-tf');
+  const curSym = symSelect.value;
+  const curTf = tfSelect.value;
+  symSelect.innerHTML = '<option value="">All symbols</option>';
+  tfSelect.innerHTML = '<option value="">All timeframes</option>';
+  (res.symbols || []).forEach(s => {
+    symSelect.innerHTML += `<option value="${s}" ${s===curSym?'selected':''}>${s}</option>`;
+  });
+  (res.timeframes || []).forEach(t => {
+    tfSelect.innerHTML += `<option value="${t}" ${t===curTf?'selected':''}>${t}</option>`;
+  });
+
+  // Render table
+  const tbody = document.getElementById('data-series-table');
+  if (!res.series || res.series.length === 0) {
+    tbody.innerHTML = '';
+    document.getElementById('data-series-empty').classList.remove('hidden');
+    return;
+  }
+  document.getElementById('data-series-empty').classList.add('hidden');
+
+  tbody.innerHTML = res.series.map(s => {
+    const days = s.first_timestamp_ms && s.last_timestamp_ms
+      ? ((s.last_timestamp_ms - s.first_timestamp_ms) / 86400000).toFixed(1)
+      : '—';
+    return `<tr class="border-b border-border/50 hover:bg-border/20">
+      <td class="py-2 px-2 font-bold text-accent">${s.symbol}</td>
+      <td class="py-2 px-2">${s.timeframe}</td>
+      <td class="py-2 px-2 text-right font-mono">${s.candle_count.toLocaleString()}</td>
+      <td class="py-2 px-2 text-gray-400">${fmtMs(s.first_timestamp_ms)}</td>
+      <td class="py-2 px-2 text-gray-400">${fmtMs(s.last_timestamp_ms)}</td>
+      <td class="py-2 px-2 text-gray-400">${days}</td>
+      <td class="py-2 px-2 text-gray-500">${fmtDatetime(s.last_collected)}</td>
+    </tr>`;
+  }).join('');
+}
+
+async function runGapCheck() {
+  const sym = document.getElementById('gap-symbol').value;
+  const tf = document.getElementById('gap-tf').value;
+  const btn = document.getElementById('gap-check-btn');
+  const container = document.getElementById('gap-results');
+  const empty = document.getElementById('gap-empty');
+
+  btn.textContent = 'Checking...';
+  btn.disabled = true;
+
+  const params = new URLSearchParams();
+  if (sym) params.set('symbol', sym);
+  if (tf) params.set('timeframe', tf);
+
+  const res = await api('/data/candles/check-gaps?' + params);
+  btn.textContent = 'Run Check';
+  btn.disabled = false;
+
+  if (res.error) {
+    container.innerHTML = `<div class="text-danger text-xs">${res.error}</div>`;
+    empty.classList.add('hidden');
+    return;
+  }
+
+  if (!res.results || res.results.length === 0) {
+    container.innerHTML = '';
+    empty.textContent = 'No data found for selected filters';
+    empty.classList.remove('hidden');
+    return;
+  }
+
+  empty.classList.add('hidden');
+
+  container.innerHTML = res.results.map(r => {
+    if (r.error) {
+      return `<div class="border border-warn/30 rounded p-3">
+        <span class="text-warn font-bold">${r.symbol} ${r.timeframe}</span>: ${r.error}
+      </div>`;
+    }
+
+    const statusColors = {
+      ok: 'text-accent', has_gaps: 'text-warn', has_duplicates: 'text-warn',
+      gaps_and_duplicates: 'text-danger', insufficient_data: 'text-gray-500'
+    };
+    const statusLabels = {
+      ok: 'OK — No gaps', has_gaps: 'Gaps found', has_duplicates: 'Duplicates found',
+      gaps_and_duplicates: 'Gaps + Duplicates', insufficient_data: 'Not enough data'
+    };
+    const cls = statusColors[r.status] || 'text-gray-400';
+    const label = statusLabels[r.status] || r.status;
+    const pct = r.expected_candles ? ((r.total_candles / r.expected_candles) * 100).toFixed(1) : '—';
+
+    let gapHtml = '';
+    if (r.gaps && r.gaps.length > 0) {
+      const gapRows = r.gaps.slice(0, 20).map(g => {
+        return `<tr class="border-b border-border/30">
+          <td class="py-1 px-2">${fmtMs(g.after_ms)}</td>
+          <td class="py-1 px-2">${fmtMs(g.before_ms)}</td>
+          <td class="py-1 px-2 text-right text-warn font-mono">${g.missing_candles}</td>
+          <td class="py-1 px-2 text-right text-gray-500">${g.gap_duration_min}m</td>
+        </tr>`;
+      }).join('');
+      const moreText = r.total_gaps > 20 ? `<div class="text-gray-600 text-xs mt-1">... and ${r.total_gaps - 20} more gaps</div>` : '';
+      gapHtml = `<details class="mt-2">
+        <summary class="text-xs text-gray-500 cursor-pointer hover:text-gray-300">Show ${r.total_gaps} gap(s)</summary>
+        <table class="w-full text-xs mt-2">
+          <thead><tr class="text-gray-600 border-b border-border">
+            <th class="text-left py-1 px-2">After</th>
+            <th class="text-left py-1 px-2">Before</th>
+            <th class="text-right py-1 px-2">Missing</th>
+            <th class="text-right py-1 px-2">Duration</th>
+          </tr></thead>
+          <tbody>${gapRows}</tbody>
+        </table>
+        ${moreText}
+      </details>`;
+    }
+
+    let dupeHtml = '';
+    if (r.duplicate_timestamps > 0) {
+      dupeHtml = `<span class="ml-3 text-warn text-xs">${r.duplicate_timestamps} duplicate timestamp(s)</span>`;
+    }
+
+    return `<div class="border ${r.status === 'ok' ? 'border-accent/20' : 'border-warn/30'} rounded-lg p-3">
+      <div class="flex items-center justify-between">
+        <div>
+          <span class="font-bold text-accent">${r.symbol}</span>
+          <span class="text-gray-500 ml-1">${r.timeframe}</span>
+          <span class="ml-3 ${cls} text-xs font-bold">${label}</span>
+          ${dupeHtml}
+        </div>
+        <div class="text-xs text-gray-500">
+          ${(r.total_candles || 0).toLocaleString()} / ${(r.expected_candles || 0).toLocaleString()} candles
+          <span class="ml-1 font-mono ${parseFloat(pct) >= 99 ? 'text-accent' : parseFloat(pct) >= 95 ? 'text-warn' : 'text-danger'}">(${pct}%)</span>
+        </div>
+      </div>
+      <div class="text-xs text-gray-500 mt-1">
+        ${fmtMs(r.first_ms)} — ${fmtMs(r.last_ms)}
+        ${r.missing_count > 0 ? ` · <span class="text-warn">${r.missing_count} missing candles</span>` : ''}
+      </div>
+      ${gapHtml}
+    </div>`;
+  }).join('');
 }
 
 // ─── Clock ───

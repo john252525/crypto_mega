@@ -1176,6 +1176,168 @@ async def data_health():
     return {"data": data_provider.get_data_health()}
 
 
+@app.get("/data/candles/summary")
+async def candles_summary():
+    """Aggregated summary of all candle data in the database."""
+    if not db_session:
+        raise HTTPException(503, "Database not connected")
+
+    from sqlalchemy import select, func as sa_func, distinct
+    from crypto_mega.data.models import CandleRecord
+
+    async with db_session() as session:
+        # Get all unique symbol+timeframe combos with stats
+        stmt = (
+            select(
+                CandleRecord.symbol,
+                CandleRecord.timeframe,
+                sa_func.count(CandleRecord.id).label("count"),
+                sa_func.min(CandleRecord.timestamp_ms).label("first_ts"),
+                sa_func.max(CandleRecord.timestamp_ms).label("last_ts"),
+                sa_func.min(CandleRecord.collected_at).label("first_collected"),
+                sa_func.max(CandleRecord.collected_at).label("last_collected"),
+            )
+            .group_by(CandleRecord.symbol, CandleRecord.timeframe)
+            .order_by(CandleRecord.symbol, CandleRecord.timeframe)
+        )
+        rows = (await session.execute(stmt)).all()
+
+        # Total candle count
+        total_stmt = select(sa_func.count(CandleRecord.id))
+        total_count = (await session.execute(total_stmt)).scalar() or 0
+
+        # Distinct symbols and timeframes
+        symbols_stmt = select(distinct(CandleRecord.symbol))
+        symbols = [r[0] for r in (await session.execute(symbols_stmt)).all()]
+
+        timeframes_stmt = select(distinct(CandleRecord.timeframe))
+        timeframes = [r[0] for r in (await session.execute(timeframes_stmt)).all()]
+
+        series = []
+        for row in rows:
+            series.append({
+                "symbol": row.symbol,
+                "timeframe": row.timeframe,
+                "candle_count": row.count,
+                "first_timestamp_ms": row.first_ts,
+                "last_timestamp_ms": row.last_ts,
+                "first_collected": row.first_collected.isoformat() if row.first_collected else None,
+                "last_collected": row.last_collected.isoformat() if row.last_collected else None,
+            })
+
+    return {
+        "total_candles": total_count,
+        "symbols": symbols,
+        "timeframes": timeframes,
+        "series": series,
+    }
+
+
+@app.get("/data/candles/check-gaps")
+async def candles_check_gaps(symbol: str = "", timeframe: str = ""):
+    """Check for missing candles (gaps) in stored data sequences."""
+    if not db_session:
+        raise HTTPException(503, "Database not connected")
+
+    from sqlalchemy import select, func as sa_func, distinct
+    from crypto_mega.data.models import CandleRecord
+
+    TIMEFRAME_MS = {
+        "1m": 60_000, "3m": 180_000, "5m": 300_000, "15m": 900_000,
+        "30m": 1_800_000, "1h": 3_600_000, "2h": 7_200_000,
+        "4h": 14_400_000, "6h": 21_600_000, "8h": 28_800_000,
+        "12h": 43_200_000, "1d": 86_400_000, "3d": 259_200_000,
+        "1w": 604_800_000,
+    }
+
+    async with db_session() as session:
+        # Determine which series to check
+        if symbol and timeframe:
+            pairs = [(symbol, timeframe)]
+        else:
+            stmt = (
+                select(distinct(CandleRecord.symbol), CandleRecord.timeframe)
+                .group_by(CandleRecord.symbol, CandleRecord.timeframe)
+            )
+            pairs = [(r[0], r[1]) for r in (await session.execute(stmt)).all()]
+
+        results = []
+        for sym, tf in pairs:
+            step_ms = TIMEFRAME_MS.get(tf)
+            if not step_ms:
+                results.append({
+                    "symbol": sym, "timeframe": tf,
+                    "error": f"Unknown timeframe: {tf}",
+                })
+                continue
+
+            # Fetch all timestamps sorted
+            ts_stmt = (
+                select(CandleRecord.timestamp_ms)
+                .where(CandleRecord.symbol == sym, CandleRecord.timeframe == tf)
+                .order_by(CandleRecord.timestamp_ms)
+            )
+            timestamps = [r[0] for r in (await session.execute(ts_stmt)).all()]
+
+            if len(timestamps) < 2:
+                results.append({
+                    "symbol": sym, "timeframe": tf,
+                    "total_candles": len(timestamps),
+                    "gaps": [],
+                    "missing_count": 0,
+                    "status": "insufficient_data",
+                })
+                continue
+
+            # Find gaps
+            gaps = []
+            total_missing = 0
+            for i in range(1, len(timestamps)):
+                diff = timestamps[i] - timestamps[i - 1]
+                if diff > step_ms * 1.5:  # allow 50% tolerance for exchange quirks
+                    missing = int(diff / step_ms) - 1
+                    total_missing += missing
+                    gaps.append({
+                        "after_ms": timestamps[i - 1],
+                        "before_ms": timestamps[i],
+                        "missing_candles": missing,
+                        "gap_duration_min": round(diff / 60_000, 1),
+                    })
+
+            # Duplicates check
+            dupe_stmt = (
+                select(CandleRecord.timestamp_ms, sa_func.count(CandleRecord.id))
+                .where(CandleRecord.symbol == sym, CandleRecord.timeframe == tf)
+                .group_by(CandleRecord.timestamp_ms)
+                .having(sa_func.count(CandleRecord.id) > 1)
+            )
+            dupes = (await session.execute(dupe_stmt)).all()
+
+            status = "ok"
+            if total_missing > 0 and len(dupes) > 0:
+                status = "gaps_and_duplicates"
+            elif total_missing > 0:
+                status = "has_gaps"
+            elif len(dupes) > 0:
+                status = "has_duplicates"
+
+            results.append({
+                "symbol": sym,
+                "timeframe": tf,
+                "total_candles": len(timestamps),
+                "first_ms": timestamps[0],
+                "last_ms": timestamps[-1],
+                "expected_candles": int((timestamps[-1] - timestamps[0]) / step_ms) + 1,
+                "missing_count": total_missing,
+                "duplicate_timestamps": len(dupes),
+                "gaps": gaps[:50],  # limit to first 50 gaps
+                "total_gaps": len(gaps),
+                "status": status,
+            })
+
+    return {"results": results}
+
+
 @app.get("/system/alerts")
 async def system_alerts():
     """All system alerts."""
