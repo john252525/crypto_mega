@@ -156,7 +156,7 @@ async def lifespan(app: FastAPI):
     # Init database (optional — works without it)
     try:
         from crypto_mega.data.models import init_db
-        db_session = await init_db(config.db.url)
+        db_session = await asyncio.wait_for(init_db(config.db.url), timeout=15)
         logger.info(f"Database initialized: {config.db.url[:30]}...")
     except Exception as e:
         logger.warning(f"Database not available, running without persistence: {e}")

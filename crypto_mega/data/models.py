@@ -124,9 +124,19 @@ class BacktestResultRecord(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
-async def init_db(database_url: str) -> async_sessionmaker:
+async def init_db(database_url: str, connect_timeout: int = 10) -> async_sessionmaker:
     """Initialize database and create tables."""
-    engine = create_async_engine(database_url, echo=False)
+    # asyncpg uses 'command_timeout'; aiosqlite uses 'timeout'
+    if "asyncpg" in database_url:
+        connect_args = {"command_timeout": connect_timeout}
+    else:
+        connect_args = {"timeout": connect_timeout}
+    engine = create_async_engine(
+        database_url,
+        echo=False,
+        connect_args=connect_args,
+        pool_pre_ping=True,
+    )
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     return async_sessionmaker(engine, expire_on_commit=False)
