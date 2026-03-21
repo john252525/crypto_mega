@@ -1311,6 +1311,37 @@ async def connect_exchange(req: ExchangeConnectRequest):
         raise HTTPException(400, f"Connection failed: {e}")
 
 
+@app.get("/exchange/symbols")
+async def exchange_symbols(exchange: str = ""):
+    """Get all USDT trading pairs directly from exchange.
+
+    If exchange data provider is connected, use it.
+    Otherwise try to connect temporarily.
+    """
+    # 1. Try existing data_provider connection
+    if data_provider._exchange is not None:
+        try:
+            all_symbols = await data_provider.get_available_symbols()
+            # Filter to USDT pairs and sort
+            usdt = sorted([s for s in all_symbols if s.endswith("/USDT")])
+            exchange_name = data_provider._exchange_id or "unknown"
+            return {"exchange": exchange_name, "symbols": usdt, "total": len(usdt)}
+        except Exception as e:
+            logger.warning(f"Failed to fetch symbols from connected exchange: {e}")
+
+    # 2. Try connecting temporarily
+    ex_id = exchange or os.getenv("EXCHANGE_ID", "binance")
+    try:
+        temp = DataProvider()
+        await temp.init_exchange(ex_id, {"enableRateLimit": True})
+        all_symbols = await temp.get_available_symbols()
+        usdt = sorted([s for s in all_symbols if s.endswith("/USDT")])
+        await temp.close()
+        return {"exchange": ex_id, "symbols": usdt, "total": len(usdt)}
+    except Exception as e:
+        raise HTTPException(503, f"Cannot fetch symbols from {ex_id}: {e}")
+
+
 # ─── Logs ───
 
 @app.get("/data/collector/status")

@@ -1821,7 +1821,12 @@ function _syncSymPicker(pickerId) {
   const textInput = document.getElementById(pickerId + '-text');
   const countEl = document.getElementById(pickerId + '-count');
   if (textInput) textInput.value = [...state.selected].join(', ');
-  if (countEl) countEl.textContent = state.selected.size + ' selected';
+  if (countEl) {
+    const total = Object.values(state.allSymbols).flat().length;
+    countEl.textContent = total > 0
+      ? `${state.selected.size} selected / ${total} available`
+      : `${state.selected.size} selected`;
+  }
   _renderSymChips(pickerId);
 }
 
@@ -1841,21 +1846,33 @@ function _onSymTextInput(pickerId) {
 async function _loadExchangeSymbols(pickerId) {
   const state = _symbolPickers[pickerId];
   const grid = document.getElementById(pickerId + '-grid');
-  grid.innerHTML = '<div class="text-warn text-xs py-2 pulse">Loading symbols from exchange...</div>';
+  const countEl = document.getElementById(pickerId + '-count');
+  grid.innerHTML = '<div class="text-warn text-xs py-2 pulse">Connecting to exchange and loading all symbols...</div>';
 
-  // Try explore endpoint first, then fall back to refresh
-  let data = await api('/explore/symbols');
+  // 1. Try direct exchange endpoint (fastest, no explorer needed)
+  let data = await api('/exchange/symbols');
+  if (data.symbols && data.symbols.length > 0) {
+    state.allSymbols = { [data.exchange || 'exchange']: data.symbols };
+    if (countEl) countEl.textContent = `${state.selected.size} selected / ${data.symbols.length} available`;
+    _renderSymChips(pickerId);
+    return;
+  }
+
+  // 2. Fallback: try explore endpoint
+  data = await api('/explore/symbols');
   if (!data.symbols || Object.keys(data.symbols).length === 0) {
     data = await api('/explore/refresh-symbols', { method: 'POST' });
-    // Re-fetch
     data = await api('/explore/symbols');
   }
 
   if (data.symbols && Object.keys(data.symbols).length > 0) {
     state.allSymbols = data.symbols;
+    const total = Object.values(data.symbols).flat().length;
+    if (countEl) countEl.textContent = `${state.selected.size} selected / ${total} available`;
   } else {
-    // Fallback: show top symbols
+    // Last resort fallback
     state.allSymbols = { 'default': TOP_SYMBOLS };
+    if (countEl) countEl.textContent = `${state.selected.size} selected / ${TOP_SYMBOLS.length} (offline list)`;
   }
 
   _renderSymChips(pickerId);
