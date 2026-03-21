@@ -634,8 +634,8 @@ let signalBuffer = [];
 const api = (path, opts) => fetch(path, opts).then(r => r.json()).catch(e => ({ error: e.message }));
 const post = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
-// ─── Tab switching ───
-function switchTab(tab) {
+// ─── Tab switching with URL hash ───
+function switchTab(tab, pushState = true) {
   document.querySelectorAll('[data-tab]').forEach(b => {
     b.classList.toggle('tab-active', b.dataset.tab === tab);
     b.classList.toggle('text-gray-500', b.dataset.tab !== tab);
@@ -644,8 +644,21 @@ function switchTab(tab) {
     el.classList.toggle('hidden', el.id !== 'tab-' + tab);
   });
   currentTab = tab;
+  if (pushState) {
+    history.pushState(null, '', '#' + tab);
+  }
   refreshTab();
 }
+
+// Read hash on load and on back/forward navigation
+window.addEventListener('hashchange', () => {
+  const tab = location.hash.replace('#', '') || 'dashboard';
+  if (tab !== currentTab) switchTab(tab, false);
+});
+window.addEventListener('DOMContentLoaded', () => {
+  const tab = location.hash.replace('#', '') || 'dashboard';
+  if (tab !== 'dashboard') switchTab(tab, false);
+});
 
 function refreshTab() {
   if (currentTab === 'leaderboard') loadLeaderboard();
