@@ -56,6 +56,15 @@ tailwind.config = {
   .indicator-row { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid #1a1a2a; }
   .indicator-label { color: #888; }
   .indicator-value { font-weight: 600; }
+  .sym-chip { display: inline-flex; align-items: center; gap: 2px; padding: 3px 8px; border-radius: 6px; font-size: 11px; cursor: pointer; border: 1px solid #1e1e2e; background: #0a0a0f; transition: all 0.15s; user-select: none; }
+  .sym-chip:hover { border-color: #00ff88; }
+  .sym-chip.selected { background: rgba(0,255,136,0.1); border-color: #00ff88; color: #00ff88; }
+  .sym-grid { display: flex; flex-wrap: wrap; gap: 4px; max-height: 180px; overflow-y: auto; padding: 6px 0; }
+  .sym-picker-actions { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+  .sym-picker-btn { font-size: 10px; padding: 2px 8px; border-radius: 4px; cursor: pointer; border: 1px solid #1e1e2e; background: #12121a; color: #888; transition: all 0.15s; }
+  .sym-picker-btn:hover { border-color: #00bfff; color: #00bfff; }
+  .sym-search { background: #0a0a0f; border: 1px solid #1e1e2e; border-radius: 4px; padding: 3px 8px; font-size: 11px; color: #ccc; outline: none; width: 120px; }
+  .sym-search:focus { border-color: #00ff88; }
   .log-DEBUG { color: #555; }
   .log-INFO { color: #8bc34a; }
   .log-WARNING { color: #ff9800; }
@@ -263,7 +272,7 @@ tailwind.config = {
           <div class="space-y-3">
             <div>
               <label class="text-xs text-gray-500">Symbols</label>
-              <input id="gen-symbols" type="text" value="BTC/USDT,ETH/USDT" class="w-full bg-bg border border-border rounded px-2 py-1 text-sm mt-1">
+              <div id="gen-symbols-picker" class="mt-1"></div>
             </div>
             <div>
               <label class="text-xs text-gray-500">Priority (0-100)</label>
@@ -412,8 +421,8 @@ class MyStrategy(BaseStrategy):
             <option value="kucoin">KuCoin</option>
             <option value="gate">Gate.io</option>
           </select>
-          <label class="text-xs text-gray-500">Symbols (comma-separated)</label>
-          <input id="engine-symbols" type="text" value="BTC/USDT,ETH/USDT" class="w-full bg-bg border border-border rounded px-3 py-2 text-sm">
+          <label class="text-xs text-gray-500">Symbols</label>
+          <div id="engine-symbols-picker" class="mt-1"></div>
           <label class="text-xs text-gray-500">Interval (seconds)</label>
           <input id="engine-interval" type="number" value="60" class="w-full bg-bg border border-border rounded px-3 py-2 text-sm">
           <button onclick="startEngine()" class="w-full py-2 bg-accent/20 text-accent rounded hover:bg-accent/30 text-sm font-bold">Start Signal Engine</button>
@@ -1009,7 +1018,7 @@ async function deployStrategy() {
   if (!selectedTemplate) { alert('Select a template first'); return; }
   const vals = getTemplateParamValues();
   const code = renderTemplateCode();
-  const symbols = document.getElementById('gen-symbols').value.split(',').map(s => s.trim());
+  const symbols = getPickerSymbolsArray('gen-symbols-picker');
   const priority = parseInt(document.getElementById('gen-priority').value) || 50;
 
   const data = await post('/strategies/load-code', {
@@ -1029,7 +1038,7 @@ async function batchDeploy() {
   if (!selectedTemplate) { alert('Select a template first'); return; }
   const t = templates[selectedTemplate];
   const vals = getTemplateParamValues();
-  const symbols = document.getElementById('gen-symbols').value.split(',').map(s => s.trim());
+  const symbols = getPickerSymbolsArray('gen-symbols-picker');
   const priority = parseInt(document.getElementById('gen-priority').value) || 50;
   const baseName = vals.class_name || 'Batch';
 
@@ -1096,7 +1105,7 @@ async function batchDeploy() {
 // ─── Control actions ───
 async function startEngine() {
   const exchange = document.getElementById('engine-exchange').value;
-  const symbols = document.getElementById('engine-symbols').value;
+  const symbols = getPickerSymbols('engine-symbols-picker');
   const interval = document.getElementById('engine-interval').value;
   document.getElementById('engine-status').innerHTML = '<span class="text-warn">Connecting to exchange and starting...</span>';
   const data = await post(`/engine/start?interval=${interval}&symbols=${encodeURIComponent(symbols)}&exchange=${exchange}`, {});
@@ -1719,6 +1728,188 @@ async function runGapCheck() {
   }).join('');
 }
 
+// ─── Symbol Picker ───
+// Reusable multi-select symbol picker with text fallback.
+
+const _symbolPickers = {};  // id -> { selected: Set, allSymbols: {exchange: [syms]} }
+
+function createSymbolPicker(containerId, defaultSymbols = 'BTC/USDT,ETH/USDT') {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  const pickerId = containerId;
+  _symbolPickers[pickerId] = {
+    selected: new Set(defaultSymbols.split(',').map(s => s.trim()).filter(Boolean)),
+    allSymbols: {},
+    filter: '',
+  };
+
+  container.innerHTML = `
+    <input type="text" id="${pickerId}-text" value="${defaultSymbols}"
+      class="w-full bg-bg border border-border rounded px-2 py-1.5 text-sm mb-2"
+      placeholder="BTC/USDT, ETH/USDT, ..."
+      oninput="_onSymTextInput('${pickerId}')">
+    <div class="sym-picker-actions mb-1">
+      <button class="sym-picker-btn" onclick="_loadExchangeSymbols('${pickerId}')">Load from exchange</button>
+      <button class="sym-picker-btn" onclick="_symSelectAll('${pickerId}')">Select all</button>
+      <button class="sym-picker-btn" onclick="_symSelectNone('${pickerId}')">Clear</button>
+      <button class="sym-picker-btn" onclick="_symSelectTop('${pickerId}')">Top 20</button>
+      <input type="text" class="sym-search" id="${pickerId}-search" placeholder="Filter..."
+        oninput="_symFilter('${pickerId}')">
+      <span class="text-xs text-gray-500" id="${pickerId}-count">${_symbolPickers[pickerId].selected.size} selected</span>
+    </div>
+    <div class="sym-grid" id="${pickerId}-grid"></div>
+  `;
+
+  _renderSymChips(pickerId);
+}
+
+// Top symbols by market cap for quick selection
+const TOP_SYMBOLS = [
+  'BTC/USDT','ETH/USDT','BNB/USDT','SOL/USDT','XRP/USDT',
+  'DOGE/USDT','ADA/USDT','AVAX/USDT','DOT/USDT','LINK/USDT',
+  'MATIC/USDT','UNI/USDT','SHIB/USDT','LTC/USDT','ATOM/USDT',
+  'FIL/USDT','APT/USDT','ARB/USDT','OP/USDT','NEAR/USDT',
+];
+
+function _renderSymChips(pickerId) {
+  const state = _symbolPickers[pickerId];
+  const grid = document.getElementById(pickerId + '-grid');
+  if (!grid) return;
+
+  // Merge: exchange symbols + currently selected (so manual entries show too)
+  const allExchange = Object.values(state.allSymbols).flat();
+  const allSet = new Set([...allExchange, ...state.selected]);
+  let syms = [...allSet].sort();
+
+  // Apply search filter
+  const filter = (state.filter || '').toUpperCase();
+  if (filter) {
+    syms = syms.filter(s => s.toUpperCase().includes(filter));
+  }
+
+  if (syms.length === 0 && !filter) {
+    // No exchange symbols loaded — show selected as chips + hint
+    const selected = [...state.selected].sort();
+    if (selected.length === 0) {
+      grid.innerHTML = '<div class="text-gray-600 text-xs py-2">Type symbols above or click "Load from exchange"</div>';
+      return;
+    }
+    syms = selected;
+  }
+
+  if (syms.length === 0) {
+    grid.innerHTML = '<div class="text-gray-600 text-xs py-2">No matches</div>';
+    return;
+  }
+
+  grid.innerHTML = syms.map(s => {
+    const sel = state.selected.has(s) ? 'selected' : '';
+    return `<span class="sym-chip ${sel}" onclick="_symToggle('${pickerId}','${s}')">${s.replace('/USDT','')}</span>`;
+  }).join('');
+}
+
+function _symToggle(pickerId, sym) {
+  const state = _symbolPickers[pickerId];
+  if (state.selected.has(sym)) state.selected.delete(sym);
+  else state.selected.add(sym);
+  _syncSymPicker(pickerId);
+}
+
+function _syncSymPicker(pickerId) {
+  const state = _symbolPickers[pickerId];
+  const textInput = document.getElementById(pickerId + '-text');
+  const countEl = document.getElementById(pickerId + '-count');
+  if (textInput) textInput.value = [...state.selected].join(', ');
+  if (countEl) countEl.textContent = state.selected.size + ' selected';
+  _renderSymChips(pickerId);
+}
+
+function _onSymTextInput(pickerId) {
+  const state = _symbolPickers[pickerId];
+  const textInput = document.getElementById(pickerId + '-text');
+  const raw = textInput.value;
+  const syms = raw.split(/[,;\s]+/).map(s => s.trim().toUpperCase()).filter(Boolean);
+  // Normalize: if someone types "BTC" without "/USDT", append it
+  const normalized = syms.map(s => s.includes('/') ? s : s + '/USDT');
+  state.selected = new Set(normalized);
+  const countEl = document.getElementById(pickerId + '-count');
+  if (countEl) countEl.textContent = state.selected.size + ' selected';
+  _renderSymChips(pickerId);
+}
+
+async function _loadExchangeSymbols(pickerId) {
+  const state = _symbolPickers[pickerId];
+  const grid = document.getElementById(pickerId + '-grid');
+  grid.innerHTML = '<div class="text-warn text-xs py-2 pulse">Loading symbols from exchange...</div>';
+
+  // Try explore endpoint first, then fall back to refresh
+  let data = await api('/explore/symbols');
+  if (!data.symbols || Object.keys(data.symbols).length === 0) {
+    data = await api('/explore/refresh-symbols', { method: 'POST' });
+    // Re-fetch
+    data = await api('/explore/symbols');
+  }
+
+  if (data.symbols && Object.keys(data.symbols).length > 0) {
+    state.allSymbols = data.symbols;
+  } else {
+    // Fallback: show top symbols
+    state.allSymbols = { 'default': TOP_SYMBOLS };
+  }
+
+  _renderSymChips(pickerId);
+}
+
+function _symSelectAll(pickerId) {
+  const state = _symbolPickers[pickerId];
+  const allExchange = Object.values(state.allSymbols).flat();
+  if (allExchange.length > 0) {
+    // Apply filter if set
+    const filter = (state.filter || '').toUpperCase();
+    const filtered = filter ? allExchange.filter(s => s.toUpperCase().includes(filter)) : allExchange;
+    filtered.forEach(s => state.selected.add(s));
+  }
+  _syncSymPicker(pickerId);
+}
+
+function _symSelectNone(pickerId) {
+  const state = _symbolPickers[pickerId];
+  state.selected.clear();
+  _syncSymPicker(pickerId);
+}
+
+function _symSelectTop(pickerId) {
+  const state = _symbolPickers[pickerId];
+  const allExchange = Object.values(state.allSymbols).flat();
+  // If exchange symbols loaded, pick first 20; otherwise use our hardcoded top 20
+  const pool = allExchange.length > 0 ? allExchange : TOP_SYMBOLS;
+  state.selected = new Set(pool.slice(0, 20));
+  _syncSymPicker(pickerId);
+}
+
+function _symFilter(pickerId) {
+  const state = _symbolPickers[pickerId];
+  state.filter = document.getElementById(pickerId + '-search').value;
+  _renderSymChips(pickerId);
+}
+
+// Helper: get selected symbols as comma string (for API calls)
+function getPickerSymbols(pickerId) {
+  const state = _symbolPickers[pickerId];
+  if (!state) {
+    // Fallback: try reading text input directly
+    const el = document.getElementById(pickerId + '-text');
+    return el ? el.value : 'BTC/USDT,ETH/USDT';
+  }
+  return [...state.selected].join(',');
+}
+
+// Helper: get selected symbols as array
+function getPickerSymbolsArray(pickerId) {
+  return getPickerSymbols(pickerId).split(',').map(s => s.trim()).filter(Boolean);
+}
+
 // ─── Signal / Position Detail Modal ───
 
 function closeDetailModal() {
@@ -1942,6 +2133,10 @@ setInterval(refreshDashboard, 5000);
 setInterval(refreshHealth, 10000);
 setInterval(updateClock, 1000);
 updateClock();
+
+// Initialize symbol pickers
+createSymbolPicker('engine-symbols-picker', 'BTC/USDT,ETH/USDT');
+createSymbolPicker('gen-symbols-picker', 'BTC/USDT,ETH/USDT');
 
 // Load initial logs
 (async () => {
