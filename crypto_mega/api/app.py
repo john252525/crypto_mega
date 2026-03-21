@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import time
 from contextlib import asynccontextmanager
 from typing import Any
@@ -110,6 +111,9 @@ paper_tracker = PaperTracker()
 backtester = Backtester()
 db_session = None
 _engine_task = None  # background task for signal engine loop
+_shutdown_event = asyncio.Event()  # Signal graceful shutdown
+_last_health_check = time.time()
+_health_check_interval = 60  # Log health every 60 seconds
 
 
 @asynccontextmanager
@@ -133,18 +137,64 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"Could not load strategies: {e}")
 
+    # Start periodic health monitor
+    health_task = asyncio.create_task(periodic_health_check())
+
     yield
 
-    # Cleanup
+    # Stop health monitor
+    health_task.cancel()
+    try:
+        await health_task
+    except asyncio.CancelledError:
+        pass
+
+    # Graceful shutdown
+    logger.info("Initiating graceful shutdown...")
+    if _engine_task and not _engine_task.done():
+        logger.info("Stopping signal engine...")
+        signal_engine.stop()
+        try:
+            await asyncio.wait_for(_engine_task, timeout=10)
+        except asyncio.TimeoutError:
+            logger.warning("Signal engine shutdown timeout")
+
     try:
         await data_provider.close()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Error closing data provider: {e}")
     try:
         await execution_engine.close_all()
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Error closing execution engine: {e}")
+
     logger.info("App shutdown complete")
+
+
+async def periodic_health_check():
+    """Log system health every N seconds. Helps detect silent failures."""
+    global _last_health_check
+    while True:
+        try:
+            await asyncio.sleep(_health_check_interval)
+            now = time.time()
+            uptime_mins = (now - _last_health_check) / 60
+
+            strategies_running = len(signal_engine._instances) if signal_engine._instances else 0
+            ws_clients = len(ws_manager.active)
+            db_status = "✓" if db_session else "✗"
+            exchange = data_provider._exchange_id if hasattr(data_provider, '_exchange_id') else "none"
+
+            logger.info(
+                f"[HEALTH] uptime={uptime_mins:.1f}min | "
+                f"strategies={strategies_running} | "
+                f"ws_clients={ws_clients} | "
+                f"db={db_status} | "
+                f"exchange={exchange}"
+            )
+            _last_health_check = now
+        except Exception as e:
+            logger.error(f"Health check error: {e}")
 
 
 app = FastAPI(

@@ -129,39 +129,56 @@ class SignalEngine:
             return []
 
     async def run_loop(self, interval_seconds: float = 60.0):
-        """Main loop — continuously runs all active strategies."""
+        """Main loop — continuously runs all active strategies. Resilient to errors."""
         self._running = True
         logger.info(f"Signal engine started with {len(self._instances)} strategies")
 
         cycle = 0
+        consecutive_errors = 0
         while self._running:
             cycle += 1
-            # Sort by priority — higher priority runs first / gets more cycles
-            active = [
-                inst for inst in self._instances.values()
-                if inst.status in (StrategyStatus.PENDING, StrategyStatus.RUNNING)
-            ]
-            active.sort(key=lambda x: x.config.priority, reverse=True)
+            try:
+                # Sort by priority — higher priority runs first / gets more cycles
+                active = [
+                    inst for inst in self._instances.values()
+                    if inst.status in (StrategyStatus.PENDING, StrategyStatus.RUNNING)
+                ]
+                active.sort(key=lambda x: x.config.priority, reverse=True)
 
-            logger.info(
-                f"=== Cycle #{cycle} === "
-                f"{len(active)} strategies | "
-                f"next in {interval_seconds}s"
-            )
-            t0 = time.time()
-            tasks = [self.run_once(inst.config.id) for inst in active]
-            if tasks:
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                total_signals = sum(
-                    len(r) for r in results if isinstance(r, list)
-                )
-                elapsed = time.time() - t0
                 logger.info(
-                    f"Cycle #{cycle} done in {elapsed:.2f}s | "
-                    f"{total_signals} signals generated"
+                    f"=== Cycle #{cycle} === "
+                    f"{len(active)} strategies | "
+                    f"next in {interval_seconds}s"
                 )
+                t0 = time.time()
+                tasks = [self.run_once(inst.config.id) for inst in active]
+                if tasks:
+                    results = await asyncio.gather(*tasks, return_exceptions=True)
+                    total_signals = sum(
+                        len(r) for r in results if isinstance(r, list)
+                    )
+                    errors = sum(
+                        1 for r in results if isinstance(r, Exception)
+                    )
+                    elapsed = time.time() - t0
+                    logger.info(
+                        f"Cycle #{cycle} done in {elapsed:.2f}s | "
+                        f"{total_signals} signals | "
+                        f"{errors} errors"
+                    )
+                    consecutive_errors = 0
 
-            await asyncio.sleep(interval_seconds)
+                await asyncio.sleep(interval_seconds)
+
+            except Exception as e:
+                consecutive_errors += 1
+                logger.error(f"Cycle #{cycle} error (#{consecutive_errors}): {e}")
+                if consecutive_errors > 10:
+                    logger.critical(f"Too many consecutive errors, stopping engine")
+                    self._running = False
+                    break
+                # Backoff before retry
+                await asyncio.sleep(min(interval_seconds * (consecutive_errors // 5 + 1), 300))
 
     def stop(self):
         self._running = False

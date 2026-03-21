@@ -112,7 +112,7 @@ class DataProvider:
         timeframes: list[str],
         limit: int = 500,
     ) -> dict[str, pd.DataFrame]:
-        """Fetch data for multiple symbol/timeframe combos."""
+        """Fetch data for multiple symbol/timeframe combos. Resilient to failures."""
         tasks = {}
         for symbol in symbols:
             for tf in timeframes:
@@ -124,7 +124,8 @@ class DataProvider:
             try:
                 results[key] = await coro
             except Exception as e:
-                logger.error(f"Failed to fetch {key}: {e}")
+                # Log but don't crash — let strategy handle missing data
+                logger.warning(f"Failed to fetch {key}: {e}, skipping")
         return results
 
     async def get_ticker(self, symbol: str) -> dict:
