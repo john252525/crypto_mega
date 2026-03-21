@@ -60,14 +60,25 @@ tailwind.config = {
     <h1 class="text-accent font-bold text-lg">CryptoMega</h1>
     <span class="text-xs text-gray-600">signal tournament</span>
   </div>
-  <div class="flex items-center gap-4">
-    <div id="ws-status" class="flex items-center gap-1 text-xs">
+  <div class="flex items-center gap-4 text-xs">
+    <!-- System health indicators -->
+    <div class="flex items-center gap-3" id="health-bar">
+      <span class="flex items-center gap-1" title="Engine"><span class="w-2 h-2 rounded-full bg-gray-600" id="hb-engine"></span> Engine</span>
+      <span class="flex items-center gap-1" title="Exchange"><span class="w-2 h-2 rounded-full bg-gray-600" id="hb-exchange"></span> <span id="hb-exchange-name">---</span></span>
+      <span class="flex items-center gap-1" title="Database"><span class="w-2 h-2 rounded-full bg-gray-600" id="hb-db"></span> DB</span>
+      <span class="flex items-center gap-1" title="Data freshness"><span class="w-2 h-2 rounded-full bg-gray-600" id="hb-data"></span> Data</span>
+    </div>
+    <span class="text-gray-700">|</span>
+    <div id="ws-status" class="flex items-center gap-1">
       <span class="w-2 h-2 rounded-full bg-danger" id="ws-dot"></span>
       <span id="ws-label">disconnected</span>
     </div>
-    <span class="text-xs text-gray-600" id="clock"></span>
+    <span class="text-gray-600" id="clock"></span>
   </div>
 </header>
+
+<!-- Alert banner -->
+<div id="alert-banner" class="hidden px-6 py-2 text-xs border-b border-border bg-card"></div>
 
 <!-- Tabs -->
 <nav class="border-b border-border px-6 flex gap-6 text-sm">
@@ -945,6 +956,90 @@ function connectWS() {
   };
 }
 
+// ─── System Health ───
+async function refreshHealth() {
+  try {
+    const h = await api('/health');
+    if (!h) return;
+
+    // Engine indicator
+    const engDot = document.getElementById('hb-engine');
+    engDot.className = `w-2 h-2 rounded-full ${h.engine_running ? 'bg-profit' : 'bg-danger'}`;
+    engDot.parentElement.title = h.engine_running
+      ? `Engine running: ${h.strategies_running} strategies`
+      : 'Engine stopped — go to Control tab to start';
+
+    // Exchange indicator
+    const exDot = document.getElementById('hb-exchange');
+    const exName = document.getElementById('hb-exchange-name');
+    if (h.exchange && h.exchange !== 'none') {
+      exDot.className = 'w-2 h-2 rounded-full bg-profit';
+      exName.textContent = h.exchange;
+      exDot.parentElement.title = `Connected to ${h.exchange}`;
+    } else {
+      exDot.className = 'w-2 h-2 rounded-full bg-danger';
+      exName.textContent = 'none';
+      exDot.parentElement.title = 'No exchange connected';
+    }
+
+    // DB indicator
+    const dbDot = document.getElementById('hb-db');
+    if (h.db === 'connected') {
+      dbDot.className = 'w-2 h-2 rounded-full bg-profit';
+      dbDot.parentElement.title = 'Database connected (PostgreSQL)';
+    } else {
+      dbDot.className = 'w-2 h-2 rounded-full bg-warn';
+      dbDot.parentElement.title = 'No database — data wont persist. Add PostgreSQL in Railway.';
+    }
+
+    // Data freshness
+    const dataDot = document.getElementById('hb-data');
+    if (h.data_status === 'ok') {
+      dataDot.className = 'w-2 h-2 rounded-full bg-profit';
+      dataDot.parentElement.title = `Data fresh (${h.data_age_sec}s old)`;
+    } else if (h.data_status === 'stale') {
+      dataDot.className = 'w-2 h-2 rounded-full bg-warn';
+      dataDot.parentElement.title = `Data stale (${h.data_age_sec}s old)`;
+    } else if (h.data_status === 'critical') {
+      dataDot.className = 'w-2 h-2 rounded-full bg-danger pulse';
+      dataDot.parentElement.title = `Data critically old (${h.data_age_sec}s)!`;
+    } else {
+      dataDot.className = 'w-2 h-2 rounded-full bg-gray-600';
+      dataDot.parentElement.title = 'No data yet';
+    }
+
+    // Alert banner
+    const banner = document.getElementById('alert-banner');
+    if (h.alerts && h.alerts.length > 0) {
+      const recent = h.alerts.filter(a => (Date.now()/1000 - a.ts) < 3600);
+      if (recent.length > 0) {
+        const errors = recent.filter(a => a.level === 'error');
+        const warnings = recent.filter(a => a.level === 'warning');
+        let html = '';
+        if (errors.length > 0) {
+          html += errors.map(a =>
+            `<span class="text-loss font-bold mr-4">ERR [${a.component}]: ${a.message}</span>`
+          ).join('');
+        }
+        if (warnings.length > 0) {
+          html += warnings.map(a =>
+            `<span class="text-warn mr-4">WARN [${a.component}]: ${a.message}</span>`
+          ).join('');
+        }
+        banner.innerHTML = html;
+        banner.className = 'px-6 py-2 text-xs border-b border-border ' +
+          (errors.length > 0 ? 'bg-danger/10' : 'bg-warn/10');
+      } else {
+        banner.className = 'hidden';
+      }
+    } else {
+      banner.className = 'hidden';
+    }
+  } catch (e) {
+    // Health endpoint failed
+  }
+}
+
 // ─── Logs ───
 let logWs = null;
 let logEntries = [];
@@ -1073,7 +1168,9 @@ function updateClock() {
 connectWS();
 connectLogWS();
 refreshDashboard();
+refreshHealth();
 setInterval(refreshDashboard, 5000);
+setInterval(refreshHealth, 10000);
 setInterval(updateClock, 1000);
 updateClock();
 

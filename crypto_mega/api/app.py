@@ -114,12 +114,36 @@ _engine_task = None  # background task for signal engine loop
 _shutdown_event = asyncio.Event()  # Signal graceful shutdown
 _last_health_check = time.time()
 _health_check_interval = 60  # Log health every 60 seconds
+_app_start_time = time.time()
+
+# System-wide alert/problem tracking
+_system_alerts: list[dict] = []  # [{ts, level, component, message}]
+
+
+def add_system_alert(level: str, component: str, message: str):
+    """Add a system alert visible in the UI status banner."""
+    _system_alerts.append({
+        "ts": time.time(),
+        "level": level,
+        "component": component,
+        "message": message,
+    })
+    # Keep last 100
+    if len(_system_alerts) > 100:
+        _system_alerts[:] = _system_alerts[-100:]
+    if level == "error":
+        logger.error(f"[ALERT:{component}] {message}")
+    else:
+        logger.warning(f"[ALERT:{component}] {message}")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup/shutdown lifecycle. Graceful — never crashes on missing deps."""
     global db_session
+
+    global _app_start_time
+    _app_start_time = time.time()
 
     # Init database (optional — works without it)
     try:
@@ -128,26 +152,47 @@ async def lifespan(app: FastAPI):
         logger.info(f"Database initialized: {config.db.url[:30]}...")
     except Exception as e:
         logger.warning(f"Database not available, running without persistence: {e}")
+        add_system_alert(
+            "warning", "database",
+            f"No database connected — paper trading data won't persist across restarts. "
+            f"Add PostgreSQL in Railway dashboard to fix. Error: {e}"
+        )
         db_session = None
 
     # Load strategies from directory
     try:
         strategy_loader.load_directory(config.strategies_dir)
-        logger.info(f"Loaded strategies from {config.strategies_dir}")
+        loaded = list(strategy_loader.list_all().keys())
+        logger.info(f"Loaded strategies from {config.strategies_dir}: {loaded}")
+        if not loaded:
+            add_system_alert(
+                "warning", "strategies",
+                f"No strategies found in {config.strategies_dir}/"
+            )
     except Exception as e:
         logger.warning(f"Could not load strategies: {e}")
+        add_system_alert("error", "strategies", f"Failed to load strategies: {e}")
 
     # Start periodic health monitor
     health_task = asyncio.create_task(periodic_health_check())
 
+    # Auto-start engine if AUTO_START env is set (default: true for Railway)
+    auto_start = os.getenv("AUTO_START_ENGINE", "true").lower() == "true"
+    if auto_start and strategy_loader.list_all():
+        auto_task = asyncio.create_task(_auto_start_engine())
+    else:
+        auto_task = None
+
     yield
 
-    # Stop health monitor
-    health_task.cancel()
-    try:
-        await health_task
-    except asyncio.CancelledError:
-        pass
+    # Stop background tasks
+    for task in [health_task, auto_task]:
+        if task and not task.done():
+            task.cancel()
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):
+                pass
 
     # Graceful shutdown
     logger.info("Initiating graceful shutdown...")
@@ -172,29 +217,98 @@ async def lifespan(app: FastAPI):
 
 
 async def periodic_health_check():
-    """Log system health every N seconds. Helps detect silent failures."""
-    global _last_health_check
+    """Log system health every N seconds. Detects problems and creates alerts."""
     while True:
         try:
             await asyncio.sleep(_health_check_interval)
             now = time.time()
-            uptime_mins = (now - _last_health_check) / 60
+            uptime = now - _app_start_time
 
             strategies_running = len(signal_engine._instances) if signal_engine._instances else 0
             ws_clients = len(ws_manager.active)
-            db_status = "✓" if db_session else "✗"
-            exchange = data_provider._exchange_id if hasattr(data_provider, '_exchange_id') else "none"
+            db_status = "ok" if db_session else "none"
+            exchange = data_provider._exchange_id or "none"
 
             logger.info(
-                f"[HEALTH] uptime={uptime_mins:.1f}min | "
+                f"[HEALTH] uptime={uptime/60:.0f}min | "
                 f"strategies={strategies_running} | "
-                f"ws_clients={ws_clients} | "
+                f"ws={ws_clients} | "
                 f"db={db_status} | "
                 f"exchange={exchange}"
             )
-            _last_health_check = now
+
+            # Check for engine crash
+            if _engine_task and _engine_task.done():
+                exc = _engine_task.exception() if not _engine_task.cancelled() else None
+                add_system_alert(
+                    "error", "engine",
+                    f"Signal engine crashed! {exc or 'Task finished unexpectedly'}"
+                )
+
+            # Check data staleness
+            for key, df in data_provider._cache.items():
+                if len(df) == 0:
+                    continue
+                last_ts = df["timestamp"].iloc[-1]
+                if hasattr(last_ts, 'timestamp'):
+                    age = now - last_ts.timestamp()
+                else:
+                    age = 0
+                if age > 600:  # 10 min stale
+                    add_system_alert(
+                        "warning", "data",
+                        f"Data stale for {key}: last candle {age/60:.0f}min ago"
+                    )
+
         except Exception as e:
             logger.error(f"Health check error: {e}")
+
+
+async def _auto_start_engine():
+    """Auto-start engine after a brief delay (lets the app fully boot first)."""
+    global _engine_task
+    await asyncio.sleep(3)  # Wait for app to be ready
+    logger.info("Auto-starting signal engine...")
+
+    exchange = os.getenv("EXCHANGE_ID", "binance")
+    symbols = os.getenv("SYMBOLS", "BTC/USDT,ETH/USDT")
+    interval = float(os.getenv("ENGINE_INTERVAL", "60"))
+
+    try:
+        if data_provider._exchange is None:
+            await data_provider.init_exchange(exchange, {"enableRateLimit": True})
+            logger.info(f"Auto-start: connected to {data_provider._exchange_id}")
+
+        symbol_list = [s.strip() for s in symbols.split(",") if s.strip()]
+        registered = strategy_loader.list_all()
+        added = []
+        for name, cls in registered.items():
+            already = any(
+                inst.strategy.name == name
+                for inst in signal_engine._instances.values()
+            )
+            if already:
+                continue
+            cfg = StrategyConfig(
+                name=name,
+                symbols=symbol_list,
+                timeframes=[TimeFrame.H1],
+                priority=50,
+            )
+            strategy = cls(cfg)
+            sid = signal_engine.add_strategy(strategy, cfg)
+            resource_manager.set_allocation(sid, cfg.priority)
+            paper_tracker.register_strategy(sid, name)
+            added.append(name)
+
+        _engine_task = asyncio.create_task(signal_engine.run_loop(interval))
+        logger.info(
+            f"Auto-started engine: {len(added)} strategies on {data_provider._exchange_id} | "
+            f"symbols={symbol_list} | interval={interval}s"
+        )
+    except Exception as e:
+        add_system_alert("error", "auto-start", f"Engine auto-start failed: {e}")
+        logger.error(f"Auto-start failed: {e}")
 
 
 app = FastAPI(
@@ -1025,6 +1139,18 @@ async def connect_exchange(req: ExchangeConnectRequest):
 
 # ─── Logs ───
 
+@app.get("/data/health")
+async def data_health():
+    """Data integrity status — candle freshness, gaps, errors."""
+    return {"data": data_provider.get_data_health()}
+
+
+@app.get("/system/alerts")
+async def system_alerts():
+    """All system alerts."""
+    return {"alerts": _system_alerts}
+
+
 @app.get("/logs")
 async def get_logs(limit: int = 200, since: float = 0.0):
     """Get recent log entries from ring buffer."""
@@ -1225,11 +1351,45 @@ async def root():
 
 @app.get("/health")
 async def health():
+    engine_running = _engine_task is not None and not _engine_task.done()
+    exchange_id = data_provider._exchange_id or "none"
+    uptime = time.time() - _app_start_time
+
+    # Data staleness check
+    data_status = "ok"
+    data_age_sec = 0.0
+    if data_provider._cache:
+        newest = max(
+            (df.iloc[-1]["timestamp"].timestamp() if len(df) > 0 else 0)
+            for df in data_provider._cache.values()
+        )
+        data_age_sec = time.time() - newest if newest > 0 else 0
+        if data_age_sec > 300:  # 5 min stale
+            data_status = "stale"
+        elif data_age_sec > 600:  # 10 min — problem
+            data_status = "critical"
+    else:
+        data_status = "no_data"
+
+    # Recent errors count
+    recent_errors = sum(
+        1 for a in _system_alerts
+        if a["level"] == "error" and time.time() - a["ts"] < 300
+    )
+
     return {
-        "status": "ok",
+        "status": "ok" if engine_running else "idle",
+        "uptime_sec": round(uptime),
         "db": "connected" if db_session else "unavailable",
-        "strategies": len(signal_engine._instances),
+        "exchange": exchange_id,
+        "engine_running": engine_running,
+        "strategies_loaded": len(strategy_loader.list_all()),
+        "strategies_running": len(signal_engine._instances),
         "ws_clients": len(ws_manager.active),
+        "data_status": data_status,
+        "data_age_sec": round(data_age_sec),
+        "recent_errors": recent_errors,
+        "alerts": _system_alerts[-10:],
     }
 
 

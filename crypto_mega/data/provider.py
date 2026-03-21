@@ -22,6 +22,8 @@ class DataProvider:
         self._cache: dict[str, pd.DataFrame] = {}
         self._exchange = None
         self._exchange_id: str = ""
+        self._last_fetch_time: dict[str, datetime] = {}
+        self._fetch_errors: dict[str, int] = {}  # consecutive error count per key
 
     async def init_exchange(self, exchange_id: str = "binance", config: dict[str, Any] | None = None):
         """Initialize ccxt exchange (async). Falls back to other exchanges on geo-block."""
@@ -96,7 +98,16 @@ class DataProvider:
 
         df = pd.DataFrame(raw, columns=["timestamp", "open", "high", "low", "close", "volume"])
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms")
+
+        # ── Candle integrity checks ──
+        if len(df) > 1:
+            issues = self._validate_candles(df, symbol, timeframe)
+            if issues:
+                for issue in issues:
+                    logger.warning(f"Data integrity [{symbol} {timeframe}]: {issue}")
+
         self._cache[cache_key] = df
+        self._last_fetch_time[cache_key] = datetime.utcnow()
 
         last_close = df["close"].iloc[-1] if len(df) > 0 else 0
         logger.info(
@@ -136,6 +147,69 @@ class DataProvider:
         """Get list of available trading pairs."""
         await self._exchange.load_markets()
         return list(self._exchange.markets.keys())
+
+    def _validate_candles(self, df: pd.DataFrame, symbol: str, timeframe: str) -> list[str]:
+        """Validate candle data integrity. Returns list of issues found."""
+        issues = []
+        expected_delta = self._timeframe_to_delta(timeframe)
+
+        # Check for duplicates
+        dups = df["timestamp"].duplicated().sum()
+        if dups > 0:
+            issues.append(f"{dups} duplicate timestamps")
+
+        # Check for gaps (missing candles)
+        timestamps = df["timestamp"].sort_values()
+        diffs = timestamps.diff().dropna()
+        expected_ms = expected_delta.total_seconds() * 1000
+        # Allow small tolerance (2x expected)
+        gaps = diffs[diffs > pd.Timedelta(seconds=expected_delta.total_seconds() * 2.5)]
+        if len(gaps) > 0:
+            issues.append(
+                f"{len(gaps)} time gaps detected "
+                f"(largest: {gaps.max()})"
+            )
+
+        # Check for stale data (last candle too old)
+        now = datetime.utcnow()
+        last_ts = df["timestamp"].iloc[-1]
+        if hasattr(last_ts, 'to_pydatetime'):
+            last_ts = last_ts.to_pydatetime()
+        age = now - last_ts
+        if age > expected_delta * 3:
+            issues.append(f"stale data: last candle is {age} old")
+
+        # Check for zero/negative values
+        zeros = (df["close"] <= 0).sum()
+        if zeros > 0:
+            issues.append(f"{zeros} candles with zero/negative close price")
+
+        # Check for extreme jumps (>50% in one candle — likely data error)
+        if len(df) > 1:
+            pct_change = df["close"].pct_change().abs()
+            extreme = (pct_change > 0.5).sum()
+            if extreme > 0:
+                issues.append(f"{extreme} candles with >50% price jump (possible data error)")
+
+        return issues
+
+    def get_data_health(self) -> dict:
+        """Return data health summary for the UI."""
+        now = datetime.utcnow()
+        health = {}
+        for key, df in self._cache.items():
+            last_fetch = self._last_fetch_time.get(key)
+            last_ts = df["timestamp"].iloc[-1] if len(df) > 0 else None
+            age = (now - last_ts.to_pydatetime()).total_seconds() if last_ts is not None else 0
+
+            health[key] = {
+                "candles": len(df),
+                "last_candle_ts": str(last_ts) if last_ts is not None else None,
+                "data_age_sec": round(age),
+                "last_fetch": str(last_fetch) if last_fetch else None,
+                "errors": self._fetch_errors.get(key, 0),
+            }
+        return health
 
     @staticmethod
     def _timeframe_to_delta(tf: str) -> timedelta:
