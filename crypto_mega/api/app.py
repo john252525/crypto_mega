@@ -1272,8 +1272,15 @@ async def candles_summary():
         timeframes_stmt = select(distinct(CandleRecord.timeframe))
         timeframes = [r[0] for r in (await session.execute(timeframes_stmt)).all()]
 
+        # Get last_checked times from collector stats (when we last fetched, regardless of data change)
+        collector_pairs = {}
+        if _candle_collector:
+            collector_pairs = _candle_collector.get_stats().get("pairs", {})
+
         series = []
         for row in rows:
+            key = f"{row.symbol}_{row.timeframe}"
+            pair_stats = collector_pairs.get(key, {})
             series.append({
                 "symbol": row.symbol,
                 "timeframe": row.timeframe,
@@ -1282,6 +1289,7 @@ async def candles_summary():
                 "last_timestamp_ms": row.last_ts,
                 "first_collected": row.first_collected.isoformat() if row.first_collected else None,
                 "last_collected": row.last_collected.isoformat() if row.last_collected else None,
+                "last_checked": pair_stats.get("last_collect"),
             })
 
     return {
