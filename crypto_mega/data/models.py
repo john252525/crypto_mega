@@ -176,6 +176,61 @@ class ExplorationResultRecord(Base):
     created_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class PaperPositionRecord(Base):
+    """Persisted paper trading position — survives restarts."""
+    __tablename__ = "paper_positions"
+    __table_args__ = (
+        Index("ix_paper_pos_strategy", "strategy_id"),
+        Index("ix_paper_pos_symbol", "symbol"),
+        Index("ix_paper_pos_status", "status"),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True)
+    signal_id: Mapped[str] = mapped_column(String(36), default="")
+    strategy_id: Mapped[str] = mapped_column(String(36), default="")
+    strategy_name: Mapped[str] = mapped_column(String(255), default="")
+    symbol: Mapped[str] = mapped_column(String(30), nullable=False)
+    direction: Mapped[str] = mapped_column(String(10), nullable=False)  # long/short
+    entry_price: Mapped[float] = mapped_column(Float, nullable=False)
+    current_price: Mapped[float] = mapped_column(Float, default=0.0)
+    stop_loss: Mapped[float] = mapped_column(Float, nullable=True)
+    take_profit: Mapped[float] = mapped_column(Float, nullable=True)
+    quantity: Mapped[float] = mapped_column(Float, default=1.0)
+    unrealized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
+    unrealized_pnl_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    realized_pnl: Mapped[float] = mapped_column(Float, default=0.0)
+    realized_pnl_pct: Mapped[float] = mapped_column(Float, default=0.0)
+    exit_price: Mapped[float] = mapped_column(Float, nullable=True)
+    close_reason: Mapped[str] = mapped_column(String(20), default="")
+    signal_strength: Mapped[float] = mapped_column(Float, default=0.0)
+    signal_metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    status: Mapped[str] = mapped_column(String(10), default="open")  # open/closed
+    opened_at: Mapped[datetime.datetime] = mapped_column(DateTime, server_default=func.now())
+    closed_at: Mapped[datetime.datetime] = mapped_column(DateTime, nullable=True)
+
+
+class PaperSignalLogRecord(Base):
+    """Persisted paper signal log entry."""
+    __tablename__ = "paper_signal_log"
+    __table_args__ = (
+        Index("ix_paper_sig_strategy", "strategy_id"),
+        Index("ix_paper_sig_ts", "timestamp"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    signal_id: Mapped[str] = mapped_column(String(36), default="")
+    strategy_id: Mapped[str] = mapped_column(String(36), default="")
+    strategy_name: Mapped[str] = mapped_column(String(255), default="")
+    symbol: Mapped[str] = mapped_column(String(30), nullable=False)
+    direction: Mapped[str] = mapped_column(String(10), nullable=False)
+    strength: Mapped[float] = mapped_column(Float, default=0.0)
+    price: Mapped[float] = mapped_column(Float, default=0.0)
+    stop_loss: Mapped[float] = mapped_column(Float, nullable=True)
+    take_profit: Mapped[float] = mapped_column(Float, nullable=True)
+    metadata_json: Mapped[str] = mapped_column(Text, default="{}")
+    timestamp: Mapped[float] = mapped_column(Float, nullable=False)
+
+
 class WorkerNodeRecord(Base):
     """Registered compute worker node."""
     __tablename__ = "worker_nodes"
@@ -192,16 +247,13 @@ class WorkerNodeRecord(Base):
 
 
 async def init_db(database_url: str, connect_timeout: int = 10) -> async_sessionmaker:
-    """Initialize database and create tables."""
-    # asyncpg uses 'command_timeout'; aiosqlite uses 'timeout'
-    if "asyncpg" in database_url:
-        connect_args = {"command_timeout": connect_timeout}
-    else:
-        connect_args = {"timeout": connect_timeout}
+    """Initialize database and create tables. PostgreSQL only."""
+    if "sqlite" in database_url.lower():
+        raise RuntimeError("SQLite is not supported. Use PostgreSQL.")
     engine = create_async_engine(
         database_url,
         echo=False,
-        connect_args=connect_args,
+        connect_args={"command_timeout": connect_timeout},
         pool_pre_ping=True,
     )
     async with engine.begin() as conn:

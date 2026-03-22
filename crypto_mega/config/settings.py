@@ -10,9 +10,21 @@ from pathlib import Path
 @dataclass
 class DatabaseConfig:
     # Railway injects DATABASE_URL for PostgreSQL plugin
-    url: str = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///crypto_mega.db")
+    url: str = os.getenv("DATABASE_URL", "")
 
     def __post_init__(self):
+        if not self.url:
+            raise RuntimeError(
+                "DATABASE_URL environment variable is required. "
+                "Only PostgreSQL is supported (no SQLite). "
+                "Set DATABASE_URL=postgresql://user:pass@host:5432/dbname"
+            )
+        # Reject SQLite explicitly
+        if "sqlite" in self.url.lower():
+            raise RuntimeError(
+                "SQLite is not supported. Use PostgreSQL. "
+                "Set DATABASE_URL=postgresql://user:pass@host:5432/dbname"
+            )
         # Railway gives postgres:// but SQLAlchemy needs postgresql://
         if self.url.startswith("postgres://"):
             self.url = self.url.replace("postgres://", "postgresql+asyncpg://", 1)

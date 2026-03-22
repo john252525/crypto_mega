@@ -248,6 +248,11 @@ async def _connect_db_with_retry():
         try:
             db_session = await asyncio.wait_for(init_db(config.db.url), timeout=15)
             logger.info(f"Database connected: {config.db.url[:30]}...")
+            # Load paper tracker state from DB
+            try:
+                await paper_tracker.init_db(db_session)
+            except Exception as e:
+                logger.error(f"Failed to init paper tracker from DB: {e}")
             return
         except Exception as e:
             logger.warning(f"Database connection attempt #{attempt + 1} failed: {e}")
@@ -343,7 +348,7 @@ async def _paper_price_update_loop():
                         ticker = await data_provider.get_ticker(symbol)
                         price = ticker.get("last") or ticker.get("close")
                         if price:
-                            closed = paper_tracker.update_price(symbol, float(price))
+                            closed = await paper_tracker.update_price(symbol, float(price))
                             if closed:
                                 for pos in closed:
                                     await ws_manager.broadcast({
@@ -1151,14 +1156,14 @@ async def paper_positions_open(strategy_id: str | None = None):
 @app.post("/paper/reset")
 async def paper_reset():
     """Reset all paper positions and signals."""
-    result = paper_tracker.reset_all()
+    result = await paper_tracker.reset_all()
     return result
 
 
 @app.post("/paper/deduplicate")
 async def paper_deduplicate():
     """Remove duplicate open positions, keeping oldest per strategy+symbol+direction."""
-    removed = paper_tracker.deduplicate_positions()
+    removed = await paper_tracker.deduplicate_positions()
     return {"removed": removed}
 
 
