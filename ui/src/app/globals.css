@@ -1,0 +1,141 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&display=swap');
+
+/* ---------------------------------------------------------------------------
+   Base layer overrides
+   --------------------------------------------------------------------------- */
+@layer base {
+  html {
+    color-scheme: dark;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  body {
+    @apply bg-bg text-gray-200 antialiased;
+  }
+
+  /* Selection */
+  ::selection {
+    @apply bg-accent/20 text-accent;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Scrollbar
+   --------------------------------------------------------------------------- */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0a0f;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #1e1e2e;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #2e2e3e;
+}
+
+/* Firefox */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #1e1e2e #0a0a0f;
+}
+
+/* ---------------------------------------------------------------------------
+   Animations
+   --------------------------------------------------------------------------- */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.2s ease-out;
+}
+
+.animate-pulse-dot {
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+.animate-slideDown {
+  animation: slideDown 0.2s ease-out;
+}
+
+.animate-spin-slow {
+  animation: spin 2s linear infinite;
+}
+
+/* ---------------------------------------------------------------------------
+   Utility helpers
+   --------------------------------------------------------------------------- */
+.text-mono-xs {
+  font-size: 0.7rem;
+  line-height: 1rem;
+  letter-spacing: 0.02em;
+}
+
+.card {
+  @apply bg-card border border-border rounded-lg;
+}
+
+.btn-primary {
+  @apply px-3 py-1.5 bg-accent/20 text-accent border border-accent/30
+         rounded text-xs font-medium hover:bg-accent/30
+         transition-colors duration-150;
+}
+
+.btn-danger {
+  @apply px-3 py-1.5 bg-danger/20 text-danger border border-danger/30
+         rounded text-xs font-medium hover:bg-danger/30
+         transition-colors duration-150;
+}
+
+.btn-secondary {
+  @apply px-3 py-1.5 bg-border text-gray-300 border border-border
+         rounded text-xs font-medium hover:bg-border/80
+         transition-colors duration-150;
+}
