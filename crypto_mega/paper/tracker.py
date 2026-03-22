@@ -220,6 +220,16 @@ class PaperTracker:
         if signal.strength < 0.3:
             return
 
+        # Deduplicate: skip if already have an open position for this strategy+symbol+direction
+        for p in self._positions.values():
+            if (
+                p.strategy_id == signal.strategy_id
+                and p.symbol == signal.symbol
+                and p.direction == signal.direction
+                and p.is_open
+            ):
+                return
+
         # Check max open positions per strategy
         open_count = sum(
             1
@@ -477,6 +487,35 @@ class PaperTracker:
             }
             for p in positions[-limit:]
         ]
+
+    def reset_all(self) -> dict:
+        """Close all open positions and clear state. Returns count of cleared items."""
+        open_count = len(self._positions)
+        closed_count = len(self._closed)
+        signal_count = len(self._signal_log)
+        self._positions.clear()
+        self._closed.clear()
+        self._signal_log.clear()
+        logger.info(f"Paper tracker reset: {open_count} open, {closed_count} closed, {signal_count} signals cleared")
+        return {"open_cleared": open_count, "closed_cleared": closed_count, "signals_cleared": signal_count}
+
+    def deduplicate_positions(self) -> int:
+        """Remove duplicate open positions keeping only the oldest per strategy+symbol+direction."""
+        seen = {}
+        to_remove = []
+        for pos_id, pos in sorted(self._positions.items(), key=lambda x: x[1].opened_at):
+            if not pos.is_open:
+                continue
+            key = (pos.strategy_id, pos.symbol, pos.direction)
+            if key in seen:
+                to_remove.append(pos_id)
+            else:
+                seen[key] = pos_id
+        for pid in to_remove:
+            del self._positions[pid]
+        if to_remove:
+            logger.info(f"Deduplicated paper positions: removed {len(to_remove)} duplicates")
+        return len(to_remove)
 
     def get_signal_log(self, limit: int = 100) -> list[dict]:
         """Get recent signal log."""

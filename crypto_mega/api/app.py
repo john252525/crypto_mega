@@ -192,6 +192,9 @@ async def lifespan(app: FastAPI):
     if auto_explore:
         explorer_task_bg = asyncio.create_task(_auto_start_explorer())
 
+    # Start paper position price updater (checks SL/TP every 10s)
+    price_update_task = asyncio.create_task(_paper_price_update_loop())
+
     yield
 
     # Stop collector & explorer
@@ -202,7 +205,7 @@ async def lifespan(app: FastAPI):
         _strategy_explorer.stop()
 
     # Stop background tasks
-    for task in [health_task, auto_task, db_retry_task, collector_task, explorer_task_bg]:
+    for task in [health_task, auto_task, db_retry_task, collector_task, explorer_task_bg, price_update_task]:
         if task and not task.done():
             task.cancel()
             try:
@@ -325,6 +328,36 @@ async def _auto_start_explorer():
         f"queue_size={config.exploration.queue_size}"
     )
     await _strategy_explorer.run_loop()
+
+
+async def _paper_price_update_loop():
+    """Fetch live prices for open paper positions and check SL/TP every 10s."""
+    await asyncio.sleep(10)  # Let the app boot
+    logger.info("Paper price updater started")
+    while True:
+        try:
+            symbols = paper_tracker.get_symbols_tracked()
+            if symbols and data_provider._exchange is not None:
+                for symbol in symbols:
+                    try:
+                        ticker = await data_provider.get_ticker(symbol)
+                        price = ticker.get("last") or ticker.get("close")
+                        if price:
+                            closed = paper_tracker.update_price(symbol, float(price))
+                            if closed:
+                                for pos in closed:
+                                    await ws_manager.broadcast({
+                                        "type": "position_closed",
+                                        "position_id": pos.id,
+                                        "symbol": pos.symbol,
+                                        "reason": pos.close_reason,
+                                        "pnl_pct": round(pos.realized_pnl_pct, 2),
+                                    })
+                    except Exception as e:
+                        logger.debug(f"Price update failed for {symbol}: {e}")
+        except Exception as e:
+            logger.warning(f"Paper price update loop error: {e}")
+        await asyncio.sleep(10)
 
 
 async def periodic_health_check():
@@ -1113,6 +1146,20 @@ async def paper_leaderboard(sort_by: str = "total_pnl_pct", limit: int = 50):
 @app.get("/paper/positions/open")
 async def paper_positions_open(strategy_id: str | None = None):
     return {"positions": paper_tracker.get_open_positions(strategy_id)}
+
+
+@app.post("/paper/reset")
+async def paper_reset():
+    """Reset all paper positions and signals."""
+    result = paper_tracker.reset_all()
+    return result
+
+
+@app.post("/paper/deduplicate")
+async def paper_deduplicate():
+    """Remove duplicate open positions, keeping oldest per strategy+symbol+direction."""
+    removed = paper_tracker.deduplicate_positions()
+    return {"removed": removed}
 
 
 @app.get("/paper/positions/closed")
