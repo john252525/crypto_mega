@@ -204,6 +204,9 @@ class PaperTracker:
             for rec in result.scalars().all():
                 pos = self._record_to_position(rec)
                 self._positions[pos.id] = pos
+                # Restore strategy name mapping from DB
+                if pos.strategy_name and pos.strategy_name != "?":
+                    self._strategy_names[pos.strategy_id] = pos.strategy_name
 
             # Load closed positions (last 500)
             result = await session.execute(
@@ -213,7 +216,11 @@ class PaperTracker:
                 .limit(500)
             )
             for rec in result.scalars().all():
-                self._closed.append(self._record_to_position(rec))
+                pos = self._record_to_position(rec)
+                self._closed.append(pos)
+                # Restore strategy name mapping from DB
+                if pos.strategy_name and pos.strategy_name != "?":
+                    self._strategy_names[pos.strategy_id] = pos.strategy_name
             self._closed.reverse()  # oldest first
 
             # Load recent signal log (last 500)
@@ -236,6 +243,9 @@ class PaperTracker:
                     "metadata": json.loads(rec.metadata_json) if rec.metadata_json else {},
                     "timestamp": rec.timestamp,
                 })
+                # Restore strategy name mapping from signal log
+                if rec.strategy_name and rec.strategy_name != "?":
+                    self._strategy_names.setdefault(rec.strategy_id, rec.strategy_name)
             self._signal_log.reverse()  # oldest first
 
         logger.info(
@@ -466,8 +476,18 @@ class PaperTracker:
         )
 
     def register_strategy(self, strategy_id: str, name: str) -> None:
-        """Register strategy name for display."""
+        """Register strategy name for display and fix any existing '?' entries."""
         self._strategy_names[strategy_id] = name
+        # Backfill name on positions/signals loaded from DB with "?"
+        for pos in self._positions.values():
+            if pos.strategy_id == strategy_id and (not pos.strategy_name or pos.strategy_name == "?"):
+                pos.strategy_name = name
+        for pos in self._closed:
+            if pos.strategy_id == strategy_id and (not pos.strategy_name or pos.strategy_name == "?"):
+                pos.strategy_name = name
+        for sig in self._signal_log:
+            if sig.get("strategy_id") == strategy_id[:8] and (not sig.get("strategy_name") or sig["strategy_name"] == "?"):
+                sig["strategy_name"] = name
 
     async def update_price(self, symbol: str, price: float) -> list[PaperPosition]:
         """Update price for a symbol, check SL/TP. Returns newly closed positions."""
@@ -545,9 +565,26 @@ class PaperTracker:
         ]
         closed_pos = [p for p in self._closed if p.strategy_id == strategy_id]
 
+        # Resolve strategy name: dict first, then fall back to positions/signals
+        name = self._strategy_names.get(strategy_id, "")
+        if not name or name == "?":
+            for p in open_pos + closed_pos:
+                if p.strategy_name and p.strategy_name != "?":
+                    name = p.strategy_name
+                    self._strategy_names[strategy_id] = name
+                    break
+        if not name or name == "?":
+            for s in self._signal_log:
+                if s["strategy_id"] == strategy_id[:8] and s.get("strategy_name") and s["strategy_name"] != "?":
+                    name = s["strategy_name"]
+                    self._strategy_names[strategy_id] = name
+                    break
+        if not name:
+            name = "?"
+
         stats = StrategyPaperStats(
             strategy_id=strategy_id,
-            strategy_name=self._strategy_names.get(strategy_id, "?"),
+            strategy_name=name,
             total_signals=len(
                 [s for s in self._signal_log if s["strategy_id"] == strategy_id[:8]]
             ),
