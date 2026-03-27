@@ -1234,17 +1234,32 @@ async def paper_position_detail(position_id: str):
 
 @app.get("/paper/stats/{strategy_id}")
 async def paper_stats(strategy_id: str):
-    """Detailed paper trading stats for a strategy."""
-    # Find full strategy ID from prefix
+    """Detailed paper trading stats for a strategy including positions and signals."""
+    # Find full strategy ID from prefix — check engine first, then paper tracker
     full_id = None
     for sid in list(signal_engine._instances.keys()):
         if sid.startswith(strategy_id):
             full_id = sid
             break
     if not full_id:
+        # Also check paper tracker positions/closed for strategies not currently running
+        for p in list(paper_tracker._positions.values()) + paper_tracker._closed:
+            if p.strategy_id.startswith(strategy_id):
+                full_id = p.strategy_id
+                break
+    if not full_id:
         raise HTTPException(404, "Strategy not found")
+
     stats = paper_tracker.get_strategy_stats(full_id)
-    return stats.to_dict()
+    result = stats.to_dict()
+    # Include recent positions and signals for this strategy
+    result["open_positions_list"] = paper_tracker.get_open_positions(full_id)
+    result["closed_positions_list"] = paper_tracker.get_closed_positions(full_id, limit=50)
+    result["recent_signals"] = [
+        s for s in paper_tracker.get_signal_log(500)
+        if s.get("strategy_id") == full_id[:8]
+    ][-50:]
+    return result
 
 
 @app.post("/paper/promote/{strategy_id}")

@@ -775,7 +775,7 @@ async function loadLeaderboard() {
     const pnlColor = s.total_pnl_pct >= 0 ? 'text-profit' : 'text-loss';
     const wrColor = s.win_rate >= 50 ? 'text-profit' : s.win_rate >= 40 ? 'text-warn' : 'text-loss';
     const sparks = s.equity_curve && s.equity_curve.length > 1 ? miniSparkline(s.equity_curve) : '-';
-    return `<tr class="border-b border-border/30 hover:bg-border/20">
+    return `<tr class="border-b border-border/30 hover:bg-border/20 cursor-pointer" onclick="showStrategyDetail('${s.strategy_id}')">
       <td class="py-2 px-2 text-gray-500">${i + 1}</td>
       <td class="py-2 px-2 font-semibold">${s.strategy_name}<br><span class="text-gray-600 font-normal">${s.strategy_id}</span></td>
       <td class="py-2 px-2 text-right ${pnlColor} font-bold">${s.total_pnl_pct >= 0 ? '+' : ''}${s.total_pnl_pct.toFixed(2)}%</td>
@@ -786,7 +786,7 @@ async function loadLeaderboard() {
       <td class="py-2 px-2 text-right text-loss">${s.max_drawdown.toFixed(2)}%</td>
       <td class="py-2 px-2 text-right text-blue">${s.open_positions}</td>
       <td class="py-2 px-2 text-right">${sparks}</td>
-      <td class="py-2 px-2 text-center">${s.promoted ? '<span class="text-warn font-bold">LIVE</span>' : `<button onclick="promoteFromLB('${s.strategy_id}')" class="text-warn hover:underline">Promote</button>`}</td>
+      <td class="py-2 px-2 text-center">${s.promoted ? '<span class="text-warn font-bold">LIVE</span>' : `<button onclick="event.stopPropagation(); promoteFromLB('${s.strategy_id}')" class="text-warn hover:underline">Promote</button>`}</td>
     </tr>`;
   }).join('');
 }
@@ -1978,6 +1978,134 @@ function closeDetailModal() {
 
 // Close on Escape
 document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDetailModal(); });
+
+async function showStrategyDetail(strategyId) {
+  const data = await api(`/paper/stats/${strategyId}`);
+  if (data.error) return;
+  renderStrategyDetailModal(data);
+}
+
+function renderStrategyDetailModal(data) {
+  const modal = document.getElementById('detail-modal');
+  const content = document.getElementById('detail-modal-content');
+
+  const pnlColor = data.total_pnl_pct >= 0 ? 'text-profit' : 'text-loss';
+  const wrColor = data.win_rate >= 50 ? 'text-profit' : data.win_rate >= 40 ? 'text-warn' : 'text-loss';
+
+  let html = `
+    <div class="flex items-center gap-3 mb-4">
+      <span class="text-accent text-lg font-bold">${data.strategy_name || data.strategy_id}</span>
+      <span class="text-gray-600 text-sm">${data.strategy_id}</span>
+      ${data.promoted ? '<span class="bg-warn/20 text-warn px-2 py-0.5 rounded text-xs font-bold">LIVE</span>' : ''}
+    </div>
+  `;
+
+  // Stats grid
+  html += `<div class="grid grid-cols-4 gap-2 mb-4 text-xs">
+    <div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Total P&L</div><div class="font-bold text-sm ${pnlColor}">${data.total_pnl_pct >= 0 ? '+' : ''}${data.total_pnl_pct.toFixed(2)}%</div></div>
+    <div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Win Rate</div><div class="font-bold text-sm ${wrColor}">${data.win_rate.toFixed(1)}%</div></div>
+    <div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Sharpe</div><div class="font-bold text-sm">${data.sharpe_ratio.toFixed(2)}</div></div>
+    <div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Profit Factor</div><div class="font-bold text-sm">${data.profit_factor.toFixed(2)}</div></div>
+    <div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Trades</div><div class="font-bold text-sm">${data.closed_positions}</div></div>
+    <div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Wins / Losses</div><div class="font-bold text-sm"><span class="text-profit">${data.wins}</span> / <span class="text-loss">${data.losses}</span></div></div>
+    <div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Max DD</div><div class="font-bold text-sm text-loss">${data.max_drawdown.toFixed(2)}%</div></div>
+    <div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Avg Hold</div><div class="font-bold text-sm">${data.avg_hold_time_min.toFixed(0)}m</div></div>
+    <div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Best Trade</div><div class="font-bold text-sm text-profit">${data.best_trade_pnl_pct >= 0 ? '+' : ''}${data.best_trade_pnl_pct.toFixed(2)}%</div></div>
+    <div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Worst Trade</div><div class="font-bold text-sm text-loss">${data.worst_trade_pnl_pct >= 0 ? '+' : ''}${data.worst_trade_pnl_pct.toFixed(2)}%</div></div>
+    <div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Avg Trade</div><div class="font-bold text-sm">${data.avg_trade_pnl_pct >= 0 ? '+' : ''}${data.avg_trade_pnl_pct.toFixed(2)}%</div></div>
+    <div class="bg-bg rounded p-3 text-center"><div class="text-gray-500">Open Now</div><div class="font-bold text-sm text-blue">${data.open_positions_list ? data.open_positions_list.length : data.open_positions}</div></div>
+  </div>`;
+
+  // Equity curve
+  if (data.equity_curve && data.equity_curve.length > 1) {
+    const w = 660, h = 80, pad = 5;
+    const d = data.equity_curve;
+    const minV = Math.min(0, ...d), maxV = Math.max(0, ...d);
+    const range = maxV - minV || 1;
+    const points = d.map((v, i) => {
+      const x = pad + (i / (d.length - 1)) * (w - pad * 2);
+      const y = pad + (1 - (v - minV) / range) * (h - pad * 2);
+      return `${x},${y}`;
+    }).join(' ');
+    const zeroY = pad + (1 - (0 - minV) / range) * (h - pad * 2);
+    const color = d[d.length - 1] >= 0 ? '#00ff88' : '#ff4444';
+    html += `<div class="mb-4"><div class="text-xs text-gray-500 mb-2 font-semibold uppercase">Equity Curve</div>
+      <svg width="${w}" height="${h}" class="w-full bg-bg rounded">
+        <line x1="${pad}" y1="${zeroY}" x2="${w-pad}" y2="${zeroY}" stroke="#333" stroke-width="1" stroke-dasharray="4"/>
+        <polyline points="${points}" fill="none" stroke="${color}" stroke-width="2"/>
+      </svg></div>`;
+  }
+
+  // Open positions
+  const openPos = data.open_positions_list || [];
+  if (openPos.length > 0) {
+    html += `<div class="mb-4"><div class="text-xs text-gray-500 mb-2 font-semibold uppercase">Open Positions (${openPos.length})</div>
+      <div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-gray-500 border-b border-border">
+        <th class="text-left py-1 px-2">Symbol</th><th class="py-1 px-2">Dir</th><th class="text-right py-1 px-2">Entry</th><th class="text-right py-1 px-2">Current</th><th class="text-right py-1 px-2">P&L %</th><th class="text-right py-1 px-2">SL</th><th class="text-right py-1 px-2">TP</th>
+      </tr></thead><tbody>`;
+    openPos.forEach(p => {
+      const c = p.unrealized_pnl_pct >= 0 ? 'text-profit' : 'text-loss';
+      const dc = p.direction === 'long' ? 'text-profit' : 'text-loss';
+      html += `<tr class="border-b border-border/20 signal-row" onclick="closeDetailModal(); setTimeout(() => showPositionDetail('${p.id}'), 100)">
+        <td class="py-1 px-2 text-blue">${p.symbol}</td>
+        <td class="py-1 px-2 ${dc} font-bold uppercase">${p.direction}</td>
+        <td class="py-1 px-2 text-right">${p.entry_price.toFixed(2)}</td>
+        <td class="py-1 px-2 text-right">${p.current_price.toFixed(2)}</td>
+        <td class="py-1 px-2 text-right ${c} font-bold">${p.unrealized_pnl_pct >= 0 ? '+' : ''}${p.unrealized_pnl_pct.toFixed(2)}%</td>
+        <td class="py-1 px-2 text-right">${p.stop_loss ? p.stop_loss.toFixed(2) : '-'}</td>
+        <td class="py-1 px-2 text-right">${p.take_profit ? p.take_profit.toFixed(2) : '-'}</td>
+      </tr>`;
+    });
+    html += `</tbody></table></div></div>`;
+  }
+
+  // Closed positions
+  const closedPos = data.closed_positions_list || [];
+  if (closedPos.length > 0) {
+    html += `<div class="mb-4"><div class="text-xs text-gray-500 mb-2 font-semibold uppercase">Closed Positions (${closedPos.length})</div>
+      <div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-gray-500 border-b border-border">
+        <th class="text-left py-1 px-2">Symbol</th><th class="py-1 px-2">Dir</th><th class="text-right py-1 px-2">Entry</th><th class="text-right py-1 px-2">Exit</th><th class="text-right py-1 px-2">P&L %</th><th class="py-1 px-2">Reason</th><th class="py-1 px-2">Time</th>
+      </tr></thead><tbody>`;
+    closedPos.slice().reverse().forEach(p => {
+      const c = p.realized_pnl_pct >= 0 ? 'text-profit' : 'text-loss';
+      const dc = p.direction === 'long' ? 'text-profit' : 'text-loss';
+      const rc = p.close_reason === 'tp' ? 'text-profit' : p.close_reason === 'sl' ? 'text-loss' : 'text-warn';
+      html += `<tr class="border-b border-border/20 signal-row" onclick="closeDetailModal(); setTimeout(() => showPositionDetail('${p.id}'), 100)">
+        <td class="py-1 px-2 text-blue">${p.symbol}</td>
+        <td class="py-1 px-2 ${dc} font-bold uppercase">${p.direction}</td>
+        <td class="py-1 px-2 text-right">${p.entry_price.toFixed(2)}</td>
+        <td class="py-1 px-2 text-right">${(p.exit_price || 0).toFixed(2)}</td>
+        <td class="py-1 px-2 text-right ${c} font-bold">${p.realized_pnl_pct >= 0 ? '+' : ''}${p.realized_pnl_pct.toFixed(2)}%</td>
+        <td class="py-1 px-2 uppercase ${rc}">${p.close_reason}</td>
+        <td class="py-1 px-2 text-gray-600">${p.closed_at ? new Date(p.closed_at).toLocaleString() : ''}</td>
+      </tr>`;
+    });
+    html += `</tbody></table></div></div>`;
+  }
+
+  // Recent signals
+  const signals = data.recent_signals || [];
+  if (signals.length > 0) {
+    html += `<div class="mb-4"><div class="text-xs text-gray-500 mb-2 font-semibold uppercase">Recent Signals (${signals.length})</div>`;
+    signals.slice().reverse().slice(0, 20).forEach(s => {
+      const sc = s.direction === 'long' ? 'text-profit' : 'text-loss';
+      const time = new Date(s.timestamp * 1000).toLocaleString();
+      html += `<div class="signal-row flex justify-between py-1 border-b border-border/20 text-xs" onclick="closeDetailModal(); setTimeout(() => showSignalDetail('${s.id}'), 100)">
+        <span><span class="${sc} font-bold uppercase">${s.direction}</span> <span class="text-blue">${s.symbol}</span> @ ${s.price.toFixed(2)}</span>
+        <span class="text-gray-600">str=${s.strength} | ${time}</span>
+      </div>`;
+    });
+    html += `</div>`;
+  }
+
+  // Empty state
+  if (openPos.length === 0 && closedPos.length === 0 && signals.length === 0) {
+    html += `<div class="text-center text-gray-600 py-8">No positions or signals yet for this strategy</div>`;
+  }
+
+  content.innerHTML = html;
+  modal.classList.remove('hidden');
+}
 
 async function showSignalDetail(signalId) {
   const data = await api(`/paper/signal/${signalId}`);
