@@ -1254,7 +1254,7 @@ async def paper_stats(strategy_id: str):
     result = stats.to_dict()
     # Include recent positions and signals for this strategy
     result["open_positions_list"] = paper_tracker.get_open_positions(full_id)
-    result["closed_positions_list"] = paper_tracker.get_closed_positions(full_id, limit=50)
+    result["closed_positions_list"] = paper_tracker.get_closed_positions(full_id, limit=1000)
     result["recent_signals"] = [
         s for s in paper_tracker.get_signal_log(500)
         if s.get("strategy_id") == full_id[:8]

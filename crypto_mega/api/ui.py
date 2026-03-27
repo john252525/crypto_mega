@@ -829,7 +829,7 @@ async function loadPositions(type) {
   document.getElementById('pos-btn-open').className = type === 'open' ? 'text-sm px-3 py-1 bg-accent/20 text-accent border border-accent rounded' : 'text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent';
   document.getElementById('pos-btn-closed').className = type === 'closed' ? 'text-sm px-3 py-1 bg-accent/20 text-accent border border-accent rounded' : 'text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent';
 
-  const data = await api(`/paper/positions/${type}`);
+  const data = await api(`/paper/positions/${type}?limit=1000`);
   const positions = data.positions || [];
   const header = document.getElementById('pos-header');
   const body = document.getElementById('pos-body');
@@ -844,18 +844,18 @@ async function loadPositions(type) {
   empty.classList.add('hidden');
 
   if (type === 'open') {
-    header.innerHTML = '<th class="text-left py-2 px-2">Strategy</th><th class="text-left py-2 px-2">Symbol</th><th class="py-2 px-2">Dir</th><th class="text-right py-2 px-2">Entry</th><th class="text-right py-2 px-2">Current</th><th class="text-right py-2 px-2">P&L %</th><th class="text-right py-2 px-2">SL</th><th class="text-right py-2 px-2">TP</th>';
+    header.innerHTML = '<th class="text-left py-2 px-2">Strategy</th><th class="text-left py-2 px-2">Symbol</th><th class="py-2 px-2">Dir</th><th class="text-right py-2 px-2">Entry</th><th class="text-right py-2 px-2">Current</th><th class="text-right py-2 px-2">P&L %</th><th class="text-right py-2 px-2">SL</th><th class="text-right py-2 px-2">TP</th><th class="py-2 px-2">Opened</th>';
     body.innerHTML = positions.map(p => {
       const color = p.unrealized_pnl_pct >= 0 ? 'text-profit' : 'text-loss';
       const dirColor = p.direction === 'long' ? 'text-profit' : 'text-loss';
-      return `<tr class="signal-row border-b border-border/30" onclick="showPositionDetail('${p.id}')"><td class="py-1 px-2">${p.strategy_name}<br><span class="text-gray-600">${p.strategy_id}</span></td><td class="py-1 px-2 text-blue">${p.symbol}</td><td class="py-1 px-2 ${dirColor} font-bold uppercase">${p.direction}</td><td class="py-1 px-2 text-right">${p.entry_price.toFixed(2)}</td><td class="py-1 px-2 text-right">${p.current_price.toFixed(2)}</td><td class="py-1 px-2 text-right ${color} font-bold">${p.unrealized_pnl_pct >= 0 ? '+' : ''}${p.unrealized_pnl_pct.toFixed(2)}%</td><td class="py-1 px-2 text-right">${p.stop_loss || '-'}</td><td class="py-1 px-2 text-right">${p.take_profit || '-'}</td></tr>`;
+      return `<tr class="signal-row border-b border-border/30" onclick="showPositionDetail('${p.id}')"><td class="py-1 px-2">${p.strategy_name}<br><span class="text-gray-600">${p.strategy_id}</span></td><td class="py-1 px-2 text-blue">${p.symbol}</td><td class="py-1 px-2 ${dirColor} font-bold uppercase">${p.direction}</td><td class="py-1 px-2 text-right">${p.entry_price.toFixed(2)}</td><td class="py-1 px-2 text-right">${p.current_price.toFixed(2)}</td><td class="py-1 px-2 text-right ${color} font-bold">${p.unrealized_pnl_pct >= 0 ? '+' : ''}${p.unrealized_pnl_pct.toFixed(2)}%</td><td class="py-1 px-2 text-right">${p.stop_loss || '-'}</td><td class="py-1 px-2 text-right">${p.take_profit || '-'}</td><td class="py-1 px-2 text-gray-600">${p.opened_at ? new Date(p.opened_at).toLocaleString() : ''}</td></tr>`;
     }).join('');
   } else {
-    header.innerHTML = '<th class="text-left py-2 px-2">Strategy</th><th class="text-left py-2 px-2">Symbol</th><th class="py-2 px-2">Dir</th><th class="text-right py-2 px-2">Entry</th><th class="text-right py-2 px-2">Exit</th><th class="text-right py-2 px-2">P&L %</th><th class="py-2 px-2">Reason</th><th class="py-2 px-2">Closed</th>';
-    body.innerHTML = positions.map(p => {
+    header.innerHTML = '<th class="text-left py-2 px-2">Strategy</th><th class="text-left py-2 px-2">Symbol</th><th class="py-2 px-2">Dir</th><th class="text-right py-2 px-2">Entry</th><th class="text-right py-2 px-2">Exit</th><th class="text-right py-2 px-2">P&L %</th><th class="py-2 px-2">Reason</th><th class="py-2 px-2">Opened</th><th class="py-2 px-2">Closed</th>';
+    body.innerHTML = positions.slice().reverse().map(p => {
       const color = p.realized_pnl_pct >= 0 ? 'text-profit' : 'text-loss';
       const dirColor = p.direction === 'long' ? 'text-profit' : 'text-loss';
-      return `<tr class="signal-row border-b border-border/30" onclick="showPositionDetail('${p.id}')"><td class="py-1 px-2">${p.strategy_name}<br><span class="text-gray-600">${p.strategy_id}</span></td><td class="py-1 px-2 text-blue">${p.symbol}</td><td class="py-1 px-2 ${dirColor} font-bold uppercase">${p.direction}</td><td class="py-1 px-2 text-right">${p.entry_price.toFixed(2)}</td><td class="py-1 px-2 text-right">${(p.exit_price || 0).toFixed(2)}</td><td class="py-1 px-2 text-right ${color} font-bold">${p.realized_pnl_pct >= 0 ? '+' : ''}${p.realized_pnl_pct.toFixed(2)}%</td><td class="py-1 px-2 uppercase">${p.close_reason}</td><td class="py-1 px-2 text-gray-600">${p.closed_at ? new Date(p.closed_at).toLocaleString() : ''}</td></tr>`;
+      return `<tr class="signal-row border-b border-border/30" onclick="showPositionDetail('${p.id}')"><td class="py-1 px-2">${p.strategy_name}<br><span class="text-gray-600">${p.strategy_id}</span></td><td class="py-1 px-2 text-blue">${p.symbol}</td><td class="py-1 px-2 ${dirColor} font-bold uppercase">${p.direction}</td><td class="py-1 px-2 text-right">${p.entry_price.toFixed(2)}</td><td class="py-1 px-2 text-right">${(p.exit_price || 0).toFixed(2)}</td><td class="py-1 px-2 text-right ${color} font-bold">${p.realized_pnl_pct >= 0 ? '+' : ''}${p.realized_pnl_pct.toFixed(2)}%</td><td class="py-1 px-2 uppercase">${p.close_reason}</td><td class="py-1 px-2 text-gray-600">${p.opened_at ? new Date(p.opened_at).toLocaleString() : ''}</td><td class="py-1 px-2 text-gray-600">${p.closed_at ? new Date(p.closed_at).toLocaleString() : ''}</td></tr>`;
     }).join('');
   }
 }
@@ -2043,7 +2043,7 @@ function renderStrategyDetailModal(data) {
   if (openPos.length > 0) {
     html += `<div class="mb-4"><div class="text-xs text-gray-500 mb-2 font-semibold uppercase">Open Positions (${openPos.length})</div>
       <div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-gray-500 border-b border-border">
-        <th class="text-left py-1 px-2">Symbol</th><th class="py-1 px-2">Dir</th><th class="text-right py-1 px-2">Entry</th><th class="text-right py-1 px-2">Current</th><th class="text-right py-1 px-2">P&L %</th><th class="text-right py-1 px-2">SL</th><th class="text-right py-1 px-2">TP</th>
+        <th class="text-left py-1 px-2">Symbol</th><th class="py-1 px-2">Dir</th><th class="text-right py-1 px-2">Entry</th><th class="text-right py-1 px-2">Current</th><th class="text-right py-1 px-2">P&L %</th><th class="text-right py-1 px-2">SL</th><th class="text-right py-1 px-2">TP</th><th class="py-1 px-2">Opened</th>
       </tr></thead><tbody>`;
     openPos.forEach(p => {
       const c = p.unrealized_pnl_pct >= 0 ? 'text-profit' : 'text-loss';
@@ -2056,6 +2056,7 @@ function renderStrategyDetailModal(data) {
         <td class="py-1 px-2 text-right ${c} font-bold">${p.unrealized_pnl_pct >= 0 ? '+' : ''}${p.unrealized_pnl_pct.toFixed(2)}%</td>
         <td class="py-1 px-2 text-right">${p.stop_loss ? p.stop_loss.toFixed(2) : '-'}</td>
         <td class="py-1 px-2 text-right">${p.take_profit ? p.take_profit.toFixed(2) : '-'}</td>
+        <td class="py-1 px-2 text-gray-600">${p.opened_at ? new Date(p.opened_at).toLocaleString() : ''}</td>
       </tr>`;
     });
     html += `</tbody></table></div></div>`;
@@ -2066,7 +2067,7 @@ function renderStrategyDetailModal(data) {
   if (closedPos.length > 0) {
     html += `<div class="mb-4"><div class="text-xs text-gray-500 mb-2 font-semibold uppercase">Closed Positions (${closedPos.length})</div>
       <div class="overflow-x-auto"><table class="w-full text-xs"><thead><tr class="text-gray-500 border-b border-border">
-        <th class="text-left py-1 px-2">Symbol</th><th class="py-1 px-2">Dir</th><th class="text-right py-1 px-2">Entry</th><th class="text-right py-1 px-2">Exit</th><th class="text-right py-1 px-2">P&L %</th><th class="py-1 px-2">Reason</th><th class="py-1 px-2">Time</th>
+        <th class="text-left py-1 px-2">Symbol</th><th class="py-1 px-2">Dir</th><th class="text-right py-1 px-2">Entry</th><th class="text-right py-1 px-2">Exit</th><th class="text-right py-1 px-2">P&L %</th><th class="py-1 px-2">Reason</th><th class="py-1 px-2">Opened</th><th class="py-1 px-2">Closed</th>
       </tr></thead><tbody>`;
     closedPos.slice().reverse().forEach(p => {
       const c = p.realized_pnl_pct >= 0 ? 'text-profit' : 'text-loss';
@@ -2079,6 +2080,7 @@ function renderStrategyDetailModal(data) {
         <td class="py-1 px-2 text-right">${(p.exit_price || 0).toFixed(2)}</td>
         <td class="py-1 px-2 text-right ${c} font-bold">${p.realized_pnl_pct >= 0 ? '+' : ''}${p.realized_pnl_pct.toFixed(2)}%</td>
         <td class="py-1 px-2 uppercase ${rc}">${p.close_reason}</td>
+        <td class="py-1 px-2 text-gray-600">${p.opened_at ? new Date(p.opened_at).toLocaleString() : ''}</td>
         <td class="py-1 px-2 text-gray-600">${p.closed_at ? new Date(p.closed_at).toLocaleString() : ''}</td>
       </tr>`;
     });
