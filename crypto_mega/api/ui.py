@@ -102,15 +102,15 @@ tailwind.config = {
 
 <!-- Tabs -->
 <nav class="border-b border-border px-6 flex gap-6 text-sm">
-  <button class="py-3 px-1 tab-active" data-tab="dashboard" onclick="switchTab('dashboard')">Dashboard</button>
-  <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="leaderboard" onclick="switchTab('leaderboard')">Leaderboard</button>
-  <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="signals" onclick="switchTab('signals')">Signals</button>
-  <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="positions" onclick="switchTab('positions')">Positions</button>
-  <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="strategies" onclick="switchTab('strategies')">Strategies</button>
-  <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="explore" onclick="switchTab('explore')">Explore</button>
-  <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="data" onclick="switchTab('data')">Data</button>
-  <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="logs" onclick="switchTab('logs')">Logs</button>
-  <button class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="control" onclick="switchTab('control')">Control</button>
+  <a href="/ui?tab=dashboard" class="py-3 px-1 tab-active" data-tab="dashboard" onclick="event.preventDefault(); switchTab('dashboard')">Dashboard</a>
+  <a href="/ui?tab=leaderboard" class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="leaderboard" onclick="event.preventDefault(); switchTab('leaderboard')">Leaderboard</a>
+  <a href="/ui?tab=signals" class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="signals" onclick="event.preventDefault(); switchTab('signals')">Signals</a>
+  <a href="/ui?tab=positions" class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="positions" onclick="event.preventDefault(); switchTab('positions')">Positions</a>
+  <a href="/ui?tab=strategies" class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="strategies" onclick="event.preventDefault(); switchTab('strategies')">Strategies</a>
+  <a href="/ui?tab=explore" class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="explore" onclick="event.preventDefault(); switchTab('explore')">Explore</a>
+  <a href="/ui?tab=data" class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="data" onclick="event.preventDefault(); switchTab('data')">Data</a>
+  <a href="/ui?tab=logs" class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="logs" onclick="event.preventDefault(); switchTab('logs')">Logs</a>
+  <a href="/ui?tab=control" class="py-3 px-1 text-gray-500 hover:text-gray-300" data-tab="control" onclick="event.preventDefault(); switchTab('control')">Control</a>
 </nav>
 
 <!-- Content -->
@@ -212,8 +212,8 @@ tailwind.config = {
   <!-- ═══ POSITIONS TAB ═══ -->
   <div id="tab-positions" class="hidden fade-in">
     <div class="flex flex-wrap gap-3 mb-3 items-end">
-      <button class="text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent" onclick="loadPositions('open')" id="pos-btn-open">Open</button>
-      <button class="text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent" onclick="loadPositions('closed')" id="pos-btn-closed">Closed</button>
+      <a href="/ui?tab=positions&type=open" class="text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent" onclick="event.preventDefault(); loadPositions('open')" id="pos-btn-open">Open</a>
+      <a href="/ui?tab=positions&type=closed" class="text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent" onclick="event.preventDefault(); loadPositions('closed')" id="pos-btn-closed">Closed</a>
       <div class="h-4 border-l border-border"></div>
       <select id="pos-f-strategy" class="bg-card border border-border rounded px-2 py-1 text-xs" onchange="applyPosFilters()"><option value="">All strategies</option></select>
       <select id="pos-f-symbol" class="bg-card border border-border rounded px-2 py-1 text-xs" onchange="applyPosFilters()"><option value="">All symbols</option></select>
@@ -242,9 +242,9 @@ tailwind.config = {
 
     <!-- Sub-tabs -->
     <div class="flex gap-4 mb-4 border-b border-border">
-      <button class="py-2 px-1 text-accent border-b-2 border-accent text-sm" data-stab="loaded" onclick="switchStratTab('loaded')">Loaded Strategies</button>
-      <button class="py-2 px-1 text-gray-500 hover:text-gray-300 text-sm" data-stab="generator" onclick="switchStratTab('generator')">Strategy Generator</button>
-      <button class="py-2 px-1 text-gray-500 hover:text-gray-300 text-sm" data-stab="guide" onclick="switchStratTab('guide')">How-To Guide</button>
+      <a href="/ui?tab=strategies&sub=loaded" class="py-2 px-1 text-accent border-b-2 border-accent text-sm" data-stab="loaded" onclick="event.preventDefault(); switchStratTab('loaded')">Loaded Strategies</a>
+      <a href="/ui?tab=strategies&sub=generator" class="py-2 px-1 text-gray-500 hover:text-gray-300 text-sm" data-stab="generator" onclick="event.preventDefault(); switchStratTab('generator')">Strategy Generator</a>
+      <a href="/ui?tab=strategies&sub=guide" class="py-2 px-1 text-gray-500 hover:text-gray-300 text-sm" data-stab="guide" onclick="event.preventDefault(); switchStratTab('guide')">How-To Guide</a>
     </div>
 
     <!-- ─── Loaded Strategies ─── -->
@@ -674,6 +674,10 @@ const api = (path, opts) => fetch(path, opts).then(r => r.json()).catch(e => ({ 
 const post = (path, body) => api(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 
 // ─── Tab switching with URL hash ───
+function _getUrlParams() {
+  return Object.fromEntries(new URLSearchParams(location.search));
+}
+
 function switchTab(tab, pushState = true) {
   document.querySelectorAll('[data-tab]').forEach(b => {
     b.classList.toggle('tab-active', b.dataset.tab === tab);
@@ -683,25 +687,42 @@ function switchTab(tab, pushState = true) {
     el.classList.toggle('hidden', el.id !== 'tab-' + tab);
   });
   currentTab = tab;
+  // Update nav link hrefs to reflect current type for positions
+  document.querySelectorAll('nav [data-tab]').forEach(a => {
+    const t = a.dataset.tab;
+    let href = '/ui?tab=' + t;
+    if (t === 'positions') href += '&type=' + _positionsTab;
+    a.href = href;
+  });
   if (pushState) {
-    history.pushState(null, '', '#' + tab);
+    let url = '/ui?tab=' + tab;
+    if (tab === 'positions') url += '&type=' + _positionsTab;
+    history.pushState(null, '', url);
   }
   refreshTab();
 }
 
-// Read hash on load and on back/forward navigation
-window.addEventListener('hashchange', () => {
-  const tab = location.hash.replace('#', '') || 'dashboard';
+// Read query params on load and on back/forward navigation
+window.addEventListener('popstate', () => {
+  const p = _getUrlParams();
+  const tab = p.tab || 'dashboard';
+  if (p.type && (p.type === 'open' || p.type === 'closed')) _positionsTab = p.type;
   if (tab !== currentTab) switchTab(tab, false);
+  if (tab === 'strategies' && p.sub) switchStratTab(p.sub);
 });
 window.addEventListener('DOMContentLoaded', () => {
-  const tab = location.hash.replace('#', '') || 'dashboard';
+  const p = _getUrlParams();
+  // Also support legacy hash URLs
+  const tab = p.tab || (location.hash ? location.hash.replace('#', '') : 'dashboard');
+  if (p.type && (p.type === 'open' || p.type === 'closed')) _positionsTab = p.type;
   if (tab !== 'dashboard') switchTab(tab, false);
+  // Handle strategy sub-tab
+  if (tab === 'strategies' && p.sub) switchStratTab(p.sub);
 });
 
 function refreshTab() {
   if (currentTab === 'leaderboard') loadLeaderboard();
-  if (currentTab === 'positions') loadPositions(_positionsTab);
+  if (currentTab === 'positions') loadPositions(_positionsTab, true);
   if (currentTab === 'strategies') loadStrategies();
   if (currentTab === 'signals') loadSignalFeed();
   if (currentTab === 'logs') filterLogs();
@@ -840,12 +861,19 @@ let _posRawClosed = [];
 let _posSortCol = null;
 let _posSortAsc = true;
 
-async function loadPositions(type) {
+async function loadPositions(type, skipUrlUpdate) {
   _positionsTab = type;
   const btnOpen = document.getElementById('pos-btn-open');
   const btnClosed = document.getElementById('pos-btn-closed');
   btnOpen.className = type === 'open' ? 'text-sm px-3 py-1 bg-accent/20 text-accent border border-accent rounded' : 'text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent';
   btnClosed.className = type === 'closed' ? 'text-sm px-3 py-1 bg-accent/20 text-accent border border-accent rounded' : 'text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent';
+  btnOpen.href = '/ui?tab=positions&type=open';
+  btnClosed.href = '/ui?tab=positions&type=closed';
+
+  // Update URL to reflect open/closed sub-tab
+  if (!skipUrlUpdate) {
+    history.replaceState(null, '', '/ui?tab=positions&type=' + type);
+  }
 
   // Show/hide reason filter (only for closed)
   document.getElementById('pos-f-reason').classList.toggle('hidden', type === 'open');
@@ -863,9 +891,11 @@ async function loadPositions(type) {
   // Populate strategy and symbol dropdowns from data
   _populatePosDropdowns(positions);
 
-  // Reset sort
-  _posSortCol = type === 'closed' ? 'closed_at' : 'opened_at';
-  _posSortAsc = false;
+  // Reset sort only on first load, preserve on refreshes
+  if (!_posSortCol) {
+    _posSortCol = type === 'closed' ? 'closed_at' : 'opened_at';
+    _posSortAsc = false;
+  }
 
   applyPosFilters();
 }
@@ -885,6 +915,12 @@ function _populatePosDropdowns(positions) {
   symSel.value = symbols.includes(curSym) ? curSym : '';
 }
 
+function _parseDate(s) {
+  if (!s) return null;
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
 function applyPosFilters() {
   const type = _positionsTab;
   const raw = type === 'open' ? _posRawOpen : _posRawClosed;
@@ -894,8 +930,8 @@ function applyPosFilters() {
   const fSymbol = document.getElementById('pos-f-symbol').value;
   const fDir = document.getElementById('pos-f-dir').value;
   const fReason = document.getElementById('pos-f-reason').value;
-  const fFrom = document.getElementById('pos-f-from').value;
-  const fTo = document.getElementById('pos-f-to').value;
+  const fFrom = document.getElementById('pos-f-from').value ? new Date(document.getElementById('pos-f-from').value + 'T00:00:00') : null;
+  const fTo = document.getElementById('pos-f-to').value ? new Date(document.getElementById('pos-f-to').value + 'T23:59:59') : null;
   const rowsVal = parseInt(document.getElementById('pos-f-rows').value);
 
   // Filter
@@ -904,25 +940,33 @@ function applyPosFilters() {
     if (fSymbol && p.symbol !== fSymbol) return false;
     if (fDir && p.direction !== fDir) return false;
     if (type === 'closed' && fReason && p.close_reason !== fReason) return false;
-    // Date filter on opened_at
-    if (fFrom) {
-      const d = type === 'closed' ? (p.closed_at || p.opened_at) : p.opened_at;
-      if (d && d < fFrom) return false;
-    }
-    if (fTo) {
-      const d = type === 'closed' ? (p.closed_at || p.opened_at) : p.opened_at;
-      if (d && d > fTo + 'T23:59:59') return false;
-    }
+    // Date filter: for closed use closed_at, for open use opened_at
+    const dateStr = type === 'closed' ? (p.closed_at || p.opened_at) : p.opened_at;
+    const d = _parseDate(dateStr);
+    if (fFrom && (!d || d < fFrom)) return false;
+    if (fTo && (!d || d > fTo)) return false;
     return true;
   });
 
-  // Sort
+  // Sort — use numeric comparison for numbers, date-aware for date strings
   if (_posSortCol) {
     filtered.sort((a, b) => {
       let va = a[_posSortCol], vb = b[_posSortCol];
-      if (va == null) va = '';
-      if (vb == null) vb = '';
+      // Handle nulls: push them to end
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      // Numbers
       if (typeof va === 'number' && typeof vb === 'number') return _posSortAsc ? va - vb : vb - va;
+      // Date columns — parse to timestamp for correct ordering
+      if (_posSortCol === 'opened_at' || _posSortCol === 'closed_at') {
+        const da = _parseDate(va), db = _parseDate(vb);
+        if (!da && !db) return 0;
+        if (!da) return 1;
+        if (!db) return -1;
+        return _posSortAsc ? da - db : db - da;
+      }
+      // Strings
       va = String(va); vb = String(vb);
       return _posSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
     });
@@ -1073,6 +1117,7 @@ function switchStratTab(tab) {
       ? 'py-2 px-1 text-accent border-b-2 border-accent text-sm'
       : 'py-2 px-1 text-gray-500 hover:text-gray-300 text-sm';
   });
+  history.replaceState(null, '', '/ui?tab=strategies&sub=' + tab);
   if (tab === 'generator') loadTemplates();
 }
 
@@ -2451,7 +2496,7 @@ refreshHealth();
 setInterval(refreshDashboard, 5000);
 setInterval(refreshHealth, 10000);
 setInterval(() => { if (currentTab === 'leaderboard') loadLeaderboard(); }, 15000);
-setInterval(() => { if (currentTab === 'positions') loadPositions(_positionsTab); }, 10000);
+setInterval(() => { if (currentTab === 'positions') loadPositions(_positionsTab, true); }, 10000);
 setInterval(updateClock, 1000);
 updateClock();
 
