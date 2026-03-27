@@ -713,13 +713,14 @@ class PaperTracker:
         ]
 
     def get_closed_positions(
-        self, strategy_id: str | None = None, limit: int = 100
+        self, strategy_id: str | None = None, limit: int = 0
     ) -> list[dict]:
-        """Get closed paper positions."""
+        """Get closed paper positions. limit=0 means all."""
         positions = self._closed
         if strategy_id:
             positions = [p for p in positions if p.strategy_id == strategy_id]
 
+        subset = positions if limit <= 0 else positions[-limit:]
         return [
             {
                 "id": p.id,
@@ -740,7 +741,7 @@ class PaperTracker:
                 "signal_id": p.signal_id,
                 "metadata": p.signal_metadata,
             }
-            for p in positions[-limit:]
+            for p in subset
         ]
 
     async def reset_all(self) -> dict:

@@ -1168,7 +1168,7 @@ async def paper_deduplicate():
 
 
 @app.get("/paper/positions/closed")
-async def paper_positions_closed(strategy_id: str | None = None, limit: int = 100):
+async def paper_positions_closed(strategy_id: str | None = None, limit: int = 0):
     return {"positions": paper_tracker.get_closed_positions(strategy_id, limit)}
 
 

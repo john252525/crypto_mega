@@ -211,9 +211,20 @@ tailwind.config = {
 
   <!-- ═══ POSITIONS TAB ═══ -->
   <div id="tab-positions" class="hidden fade-in">
-    <div class="flex gap-4 mb-4">
+    <div class="flex flex-wrap gap-3 mb-3 items-end">
       <button class="text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent" onclick="loadPositions('open')" id="pos-btn-open">Open</button>
       <button class="text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent" onclick="loadPositions('closed')" id="pos-btn-closed">Closed</button>
+      <div class="h-4 border-l border-border"></div>
+      <select id="pos-f-strategy" class="bg-card border border-border rounded px-2 py-1 text-xs" onchange="applyPosFilters()"><option value="">All strategies</option></select>
+      <select id="pos-f-symbol" class="bg-card border border-border rounded px-2 py-1 text-xs" onchange="applyPosFilters()"><option value="">All symbols</option></select>
+      <select id="pos-f-dir" class="bg-card border border-border rounded px-2 py-1 text-xs" onchange="applyPosFilters()"><option value="">All dirs</option><option value="long">LONG</option><option value="short">SHORT</option></select>
+      <select id="pos-f-reason" class="bg-card border border-border rounded px-2 py-1 text-xs hidden" onchange="applyPosFilters()"><option value="">All reasons</option><option value="tp">TP</option><option value="sl">SL</option><option value="signal">Signal</option><option value="manual">Manual</option></select>
+      <div class="h-4 border-l border-border"></div>
+      <label class="text-xs text-gray-500">From</label><input type="date" id="pos-f-from" class="bg-card border border-border rounded px-2 py-1 text-xs" onchange="applyPosFilters()">
+      <label class="text-xs text-gray-500">To</label><input type="date" id="pos-f-to" class="bg-card border border-border rounded px-2 py-1 text-xs" onchange="applyPosFilters()">
+      <div class="h-4 border-l border-border"></div>
+      <select id="pos-f-rows" class="bg-card border border-border rounded px-2 py-1 text-xs" onchange="applyPosFilters()"><option value="50">50 rows</option><option value="100" selected>100 rows</option><option value="250">250</option><option value="500">500</option><option value="0">All</option></select>
+      <span id="pos-count" class="text-xs text-gray-600 ml-auto"></span>
     </div>
     <div class="overflow-x-auto">
       <table class="w-full text-xs">
@@ -824,13 +835,127 @@ async function loadSignalFeed() {
 
 // ─── Positions ───
 let _positionsTab = 'open';
+let _posRawOpen = [];
+let _posRawClosed = [];
+let _posSortCol = null;
+let _posSortAsc = true;
+
 async function loadPositions(type) {
   _positionsTab = type;
-  document.getElementById('pos-btn-open').className = type === 'open' ? 'text-sm px-3 py-1 bg-accent/20 text-accent border border-accent rounded' : 'text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent';
-  document.getElementById('pos-btn-closed').className = type === 'closed' ? 'text-sm px-3 py-1 bg-accent/20 text-accent border border-accent rounded' : 'text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent';
+  const btnOpen = document.getElementById('pos-btn-open');
+  const btnClosed = document.getElementById('pos-btn-closed');
+  btnOpen.className = type === 'open' ? 'text-sm px-3 py-1 bg-accent/20 text-accent border border-accent rounded' : 'text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent';
+  btnClosed.className = type === 'closed' ? 'text-sm px-3 py-1 bg-accent/20 text-accent border border-accent rounded' : 'text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent';
 
-  const data = await api(`/paper/positions/${type}?limit=1000`);
+  // Show/hide reason filter (only for closed)
+  document.getElementById('pos-f-reason').classList.toggle('hidden', type === 'open');
+
+  // Fetch all data from API
+  const data = await api(`/paper/positions/${type}`);
   const positions = data.positions || [];
+
+  if (type === 'open') {
+    _posRawOpen = positions;
+  } else {
+    _posRawClosed = positions;
+  }
+
+  // Populate strategy and symbol dropdowns from data
+  _populatePosDropdowns(positions);
+
+  // Reset sort
+  _posSortCol = type === 'closed' ? 'closed_at' : 'opened_at';
+  _posSortAsc = false;
+
+  applyPosFilters();
+}
+
+function _populatePosDropdowns(positions) {
+  const strategies = [...new Set(positions.map(p => p.strategy_name))].sort();
+  const symbols = [...new Set(positions.map(p => p.symbol))].sort();
+
+  const sSel = document.getElementById('pos-f-strategy');
+  const curS = sSel.value;
+  sSel.innerHTML = '<option value="">All strategies</option>' + strategies.map(s => `<option value="${s}">${s}</option>`).join('');
+  sSel.value = strategies.includes(curS) ? curS : '';
+
+  const symSel = document.getElementById('pos-f-symbol');
+  const curSym = symSel.value;
+  symSel.innerHTML = '<option value="">All symbols</option>' + symbols.map(s => `<option value="${s}">${s}</option>`).join('');
+  symSel.value = symbols.includes(curSym) ? curSym : '';
+}
+
+function applyPosFilters() {
+  const type = _positionsTab;
+  const raw = type === 'open' ? _posRawOpen : _posRawClosed;
+
+  // Read filters
+  const fStrategy = document.getElementById('pos-f-strategy').value;
+  const fSymbol = document.getElementById('pos-f-symbol').value;
+  const fDir = document.getElementById('pos-f-dir').value;
+  const fReason = document.getElementById('pos-f-reason').value;
+  const fFrom = document.getElementById('pos-f-from').value;
+  const fTo = document.getElementById('pos-f-to').value;
+  const rowsVal = parseInt(document.getElementById('pos-f-rows').value);
+
+  // Filter
+  let filtered = raw.filter(p => {
+    if (fStrategy && p.strategy_name !== fStrategy) return false;
+    if (fSymbol && p.symbol !== fSymbol) return false;
+    if (fDir && p.direction !== fDir) return false;
+    if (type === 'closed' && fReason && p.close_reason !== fReason) return false;
+    // Date filter on opened_at
+    if (fFrom) {
+      const d = type === 'closed' ? (p.closed_at || p.opened_at) : p.opened_at;
+      if (d && d < fFrom) return false;
+    }
+    if (fTo) {
+      const d = type === 'closed' ? (p.closed_at || p.opened_at) : p.opened_at;
+      if (d && d > fTo + 'T23:59:59') return false;
+    }
+    return true;
+  });
+
+  // Sort
+  if (_posSortCol) {
+    filtered.sort((a, b) => {
+      let va = a[_posSortCol], vb = b[_posSortCol];
+      if (va == null) va = '';
+      if (vb == null) vb = '';
+      if (typeof va === 'number' && typeof vb === 'number') return _posSortAsc ? va - vb : vb - va;
+      va = String(va); vb = String(vb);
+      return _posSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
+    });
+  }
+
+  const totalFiltered = filtered.length;
+
+  // Pagination
+  if (rowsVal > 0) filtered = filtered.slice(0, rowsVal);
+
+  // Update count
+  document.getElementById('pos-count').textContent = `Showing ${filtered.length} of ${raw.length}` + (totalFiltered !== raw.length ? ` (${totalFiltered} matched)` : '');
+
+  // Render
+  _renderPosTable(type, filtered);
+}
+
+function _sortArrow(col) {
+  if (_posSortCol !== col) return '';
+  return _posSortAsc ? ' ▲' : ' ▼';
+}
+
+function _posSort(col) {
+  if (_posSortCol === col) {
+    _posSortAsc = !_posSortAsc;
+  } else {
+    _posSortCol = col;
+    _posSortAsc = col === 'strategy_name' || col === 'symbol'; // text cols default asc
+  }
+  applyPosFilters();
+}
+
+function _renderPosTable(type, positions) {
   const header = document.getElementById('pos-header');
   const body = document.getElementById('pos-body');
   const empty = document.getElementById('pos-empty');
@@ -843,16 +968,18 @@ async function loadPositions(type) {
   }
   empty.classList.add('hidden');
 
+  const thCls = 'py-2 px-2 cursor-pointer hover:text-accent select-none';
+
   if (type === 'open') {
-    header.innerHTML = '<th class="text-left py-2 px-2">Strategy</th><th class="text-left py-2 px-2">Symbol</th><th class="py-2 px-2">Dir</th><th class="text-right py-2 px-2">Entry</th><th class="text-right py-2 px-2">Current</th><th class="text-right py-2 px-2">P&L %</th><th class="text-right py-2 px-2">SL</th><th class="text-right py-2 px-2">TP</th><th class="py-2 px-2">Opened</th>';
+    header.innerHTML = `<th class="${thCls} text-left" onclick="_posSort('strategy_name')">Strategy${_sortArrow('strategy_name')}</th><th class="${thCls} text-left" onclick="_posSort('symbol')">Symbol${_sortArrow('symbol')}</th><th class="${thCls}" onclick="_posSort('direction')">Dir${_sortArrow('direction')}</th><th class="${thCls} text-right" onclick="_posSort('entry_price')">Entry${_sortArrow('entry_price')}</th><th class="${thCls} text-right" onclick="_posSort('current_price')">Current${_sortArrow('current_price')}</th><th class="${thCls} text-right" onclick="_posSort('unrealized_pnl_pct')">P&L %${_sortArrow('unrealized_pnl_pct')}</th><th class="${thCls} text-right" onclick="_posSort('stop_loss')">SL${_sortArrow('stop_loss')}</th><th class="${thCls} text-right" onclick="_posSort('take_profit')">TP${_sortArrow('take_profit')}</th><th class="${thCls}" onclick="_posSort('opened_at')">Opened${_sortArrow('opened_at')}</th>`;
     body.innerHTML = positions.map(p => {
       const color = p.unrealized_pnl_pct >= 0 ? 'text-profit' : 'text-loss';
       const dirColor = p.direction === 'long' ? 'text-profit' : 'text-loss';
       return `<tr class="signal-row border-b border-border/30" onclick="showPositionDetail('${p.id}')"><td class="py-1 px-2">${p.strategy_name}<br><span class="text-gray-600">${p.strategy_id}</span></td><td class="py-1 px-2 text-blue">${p.symbol}</td><td class="py-1 px-2 ${dirColor} font-bold uppercase">${p.direction}</td><td class="py-1 px-2 text-right">${p.entry_price.toFixed(2)}</td><td class="py-1 px-2 text-right">${p.current_price.toFixed(2)}</td><td class="py-1 px-2 text-right ${color} font-bold">${p.unrealized_pnl_pct >= 0 ? '+' : ''}${p.unrealized_pnl_pct.toFixed(2)}%</td><td class="py-1 px-2 text-right">${p.stop_loss || '-'}</td><td class="py-1 px-2 text-right">${p.take_profit || '-'}</td><td class="py-1 px-2 text-gray-600">${p.opened_at ? new Date(p.opened_at).toLocaleString() : ''}</td></tr>`;
     }).join('');
   } else {
-    header.innerHTML = '<th class="text-left py-2 px-2">Strategy</th><th class="text-left py-2 px-2">Symbol</th><th class="py-2 px-2">Dir</th><th class="text-right py-2 px-2">Entry</th><th class="text-right py-2 px-2">Exit</th><th class="text-right py-2 px-2">P&L %</th><th class="py-2 px-2">Reason</th><th class="py-2 px-2">Opened</th><th class="py-2 px-2">Closed</th>';
-    body.innerHTML = positions.slice().reverse().map(p => {
+    header.innerHTML = `<th class="${thCls} text-left" onclick="_posSort('strategy_name')">Strategy${_sortArrow('strategy_name')}</th><th class="${thCls} text-left" onclick="_posSort('symbol')">Symbol${_sortArrow('symbol')}</th><th class="${thCls}" onclick="_posSort('direction')">Dir${_sortArrow('direction')}</th><th class="${thCls} text-right" onclick="_posSort('entry_price')">Entry${_sortArrow('entry_price')}</th><th class="${thCls} text-right" onclick="_posSort('exit_price')">Exit${_sortArrow('exit_price')}</th><th class="${thCls} text-right" onclick="_posSort('realized_pnl_pct')">P&L %${_sortArrow('realized_pnl_pct')}</th><th class="${thCls}" onclick="_posSort('close_reason')">Reason${_sortArrow('close_reason')}</th><th class="${thCls}" onclick="_posSort('opened_at')">Opened${_sortArrow('opened_at')}</th><th class="${thCls}" onclick="_posSort('closed_at')">Closed${_sortArrow('closed_at')}</th>`;
+    body.innerHTML = positions.map(p => {
       const color = p.realized_pnl_pct >= 0 ? 'text-profit' : 'text-loss';
       const dirColor = p.direction === 'long' ? 'text-profit' : 'text-loss';
       return `<tr class="signal-row border-b border-border/30" onclick="showPositionDetail('${p.id}')"><td class="py-1 px-2">${p.strategy_name}<br><span class="text-gray-600">${p.strategy_id}</span></td><td class="py-1 px-2 text-blue">${p.symbol}</td><td class="py-1 px-2 ${dirColor} font-bold uppercase">${p.direction}</td><td class="py-1 px-2 text-right">${p.entry_price.toFixed(2)}</td><td class="py-1 px-2 text-right">${(p.exit_price || 0).toFixed(2)}</td><td class="py-1 px-2 text-right ${color} font-bold">${p.realized_pnl_pct >= 0 ? '+' : ''}${p.realized_pnl_pct.toFixed(2)}%</td><td class="py-1 px-2 uppercase">${p.close_reason}</td><td class="py-1 px-2 text-gray-600">${p.opened_at ? new Date(p.opened_at).toLocaleString() : ''}</td><td class="py-1 px-2 text-gray-600">${p.closed_at ? new Date(p.closed_at).toLocaleString() : ''}</td></tr>`;
