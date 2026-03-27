@@ -208,12 +208,11 @@ class PaperTracker:
                 if pos.strategy_name and pos.strategy_name != "?":
                     self._strategy_names[pos.strategy_id] = pos.strategy_name
 
-            # Load closed positions (last 500)
+            # Load ALL closed positions (no limit — stats must be complete)
             result = await session.execute(
                 select(PaperPositionRecord)
                 .where(PaperPositionRecord.status == "closed")
                 .order_by(PaperPositionRecord.closed_at.desc())
-                .limit(500)
             )
             for rec in result.scalars().all():
                 pos = self._record_to_position(rec)
@@ -223,11 +222,10 @@ class PaperTracker:
                     self._strategy_names[pos.strategy_id] = pos.strategy_name
             self._closed.reverse()  # oldest first
 
-            # Load recent signal log (last 500)
+            # Load ALL signal log entries (no limit — needed for accurate counts)
             result = await session.execute(
                 select(PaperSignalLogRecord)
                 .order_by(PaperSignalLogRecord.timestamp.desc())
-                .limit(500)
             )
             for rec in result.scalars().all():
                 self._signal_log.append({
@@ -582,12 +580,16 @@ class PaperTracker:
         if not name:
             name = "?"
 
+        # Count signals from signal_log (recent) OR fall back to position count
+        signal_count = len(
+            [s for s in self._signal_log if s["strategy_id"] == strategy_id[:8]]
+        )
+        # Positions are the ground truth — signal_log is trimmed in memory
+        position_count = len(open_pos) + len(closed_pos)
         stats = StrategyPaperStats(
             strategy_id=strategy_id,
             strategy_name=name,
-            total_signals=len(
-                [s for s in self._signal_log if s["strategy_id"] == strategy_id[:8]]
-            ),
+            total_signals=max(signal_count, position_count),
             open_positions=len(open_pos),
             closed_positions=len(closed_pos),
         )
@@ -651,6 +653,11 @@ class PaperTracker:
         ]
         if signals_for:
             stats.last_signal_at = signals_for[-1]["timestamp"]
+        elif closed_pos:
+            # Fallback: use last closed position time if signal_log was trimmed
+            last_closed = max(closed_pos, key=lambda p: p.closed_at or p.opened_at)
+            ts = last_closed.closed_at or last_closed.opened_at
+            stats.last_signal_at = ts.timestamp() if ts else 0
 
         return stats
 

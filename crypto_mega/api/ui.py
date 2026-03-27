@@ -690,7 +690,7 @@ window.addEventListener('DOMContentLoaded', () => {
 
 function refreshTab() {
   if (currentTab === 'leaderboard') loadLeaderboard();
-  if (currentTab === 'positions') loadPositions(document.getElementById('pos-btn-open').classList.contains('bg-accent/20') ? 'open' : 'closed');
+  if (currentTab === 'positions') loadPositions(_positionsTab);
   if (currentTab === 'strategies') loadStrategies();
   if (currentTab === 'signals') loadSignalFeed();
   if (currentTab === 'logs') filterLogs();
@@ -823,7 +823,9 @@ async function loadSignalFeed() {
 }
 
 // ─── Positions ───
-async function loadPositions(type, autoFallback = true) {
+let _positionsTab = 'open';
+async function loadPositions(type) {
+  _positionsTab = type;
   document.getElementById('pos-btn-open').className = type === 'open' ? 'text-sm px-3 py-1 bg-accent/20 text-accent border border-accent rounded' : 'text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent';
   document.getElementById('pos-btn-closed').className = type === 'closed' ? 'text-sm px-3 py-1 bg-accent/20 text-accent border border-accent rounded' : 'text-sm px-3 py-1 bg-card border border-border rounded hover:border-accent';
 
@@ -832,15 +834,6 @@ async function loadPositions(type, autoFallback = true) {
   const header = document.getElementById('pos-header');
   const body = document.getElementById('pos-body');
   const empty = document.getElementById('pos-empty');
-
-  // Auto-fallback: if Open is empty but Closed has data, switch to Closed
-  if (positions.length === 0 && type === 'open' && autoFallback) {
-    const closedData = await api('/paper/positions/closed');
-    if (closedData.positions && closedData.positions.length > 0) {
-      loadPositions('closed', false);
-      return;
-    }
-  }
 
   if (positions.length === 0) {
     header.innerHTML = '';
@@ -2329,7 +2322,7 @@ refreshHealth();
 setInterval(refreshDashboard, 5000);
 setInterval(refreshHealth, 10000);
 setInterval(() => { if (currentTab === 'leaderboard') loadLeaderboard(); }, 15000);
-setInterval(() => { if (currentTab === 'positions') loadPositions(document.getElementById('pos-btn-closed').classList.contains('bg-accent/20') ? 'closed' : 'open', false); }, 10000);
+setInterval(() => { if (currentTab === 'positions') loadPositions(_positionsTab); }, 10000);
 setInterval(updateClock, 1000);
 updateClock();
 
